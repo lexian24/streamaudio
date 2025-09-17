@@ -16,6 +16,11 @@ torch>=2.0.0
 transformers
 datasets
 
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+aiosqlite==0.19.0  # For async SQLite support
+
 # Utilities
 numpy==1.24.3
 scipy==1.11.4
