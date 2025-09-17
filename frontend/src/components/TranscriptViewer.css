@@ -1,0 +1,484 @@
+/* Using GitHub theme colors */
+.transcript-viewer {
+  padding: 2rem;
+  background: var(--github-bg-secondary);
+  color: var(--github-text);
+}
+
+/* Analysis Summary Section */
+.analysis-summary {
+  margin-bottom: 2rem;
+  background: var(--github-bg-tertiary);
+  border: 1px solid var(--github-border);
+  border-radius: 12px;
+  padding: 2rem;
+  border-left: 4px solid var(--github-accent);
+}
+
+.summary-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.summary-header h3 {
+  margin: 0 0 0.5rem 0;
+  color: var(--github-text);
+  font-size: 1.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.summary-header p {
+  margin: 0;
+  color: var(--github-text-secondary);
+  font-size: 1rem;
+  font-style: italic;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+}
+
+.summary-item {
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.summary-item:hover {
+  transform: translateY(-2px);
+  border-color: var(--github-accent);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.summary-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--github-accent);
+  margin-bottom: 0.5rem;
+  line-height: 1;
+}
+
+.summary-label {
+  font-size: 0.9rem;
+  color: var(--github-text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Task Info Section */
+.task-info-section {
+  margin-bottom: 2rem;
+}
+
+.task-details {
+  background: var(--github-bg-tertiary);
+  border: 1px solid var(--github-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  border-radius: 6px;
+}
+
+.task-item strong {
+  color: var(--github-text);
+  font-weight: 600;
+  min-width: 100px;
+}
+
+.status-badge {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-completed {
+  background: var(--github-success);
+  color: white;
+}
+
+.status-failed {
+  background: var(--github-danger);
+  color: white;
+}
+
+.error-item {
+  border-color: var(--github-danger);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+/* Speaker Legend */
+.speaker-legend {
+  margin-bottom: 2rem;
+}
+
+.speaker-legend h3 {
+  margin: 0 0 1rem 0;
+  color: var(--github-text);
+  font-size: 1.3rem;
+}
+
+.speaker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.speaker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--github-bg-tertiary);
+  border: 1px solid var(--github-border);
+  border-radius: 8px;
+}
+
+.speaker-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--github-border);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.speaker-name {
+  font-weight: 600;
+  color: var(--github-text);
+}
+
+.speaker-duration {
+  font-size: 0.9rem;
+  color: var(--github-text-secondary);
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+/* Emotion Legend */
+.emotion-legend {
+  margin-bottom: 2rem;
+}
+
+.emotion-legend h3 {
+  margin: 0 0 1rem 0;
+  color: var(--github-text);
+  font-size: 1.3rem;
+}
+
+.emotion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 0.75rem;
+}
+
+.emotion-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--github-bg-tertiary);
+  border: 1px solid var(--github-border);
+  border-radius: 6px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.emotion-item:hover {
+  transform: translateY(-2px);
+  background: var(--github-bg-secondary);
+  border-color: var(--github-accent);
+}
+
+.emotion-unused {
+  opacity: 0.5;
+}
+
+.emotion-emoji {
+  font-size: 1.2rem;
+}
+
+.emotion-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--github-text);
+  text-transform: capitalize;
+}
+
+/* Transcript Section */
+.transcript-section {
+  margin-bottom: 2rem;
+}
+
+.transcript-section h3 {
+  margin: 0 0 1.5rem 0;
+  color: var(--github-text);
+  font-size: 1.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.transcript-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.transcript-segment {
+  background: var(--github-bg-tertiary);
+  border: 1px solid var(--github-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  border-left: 4px solid var(--github-accent);
+}
+
+.segment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.segment-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.speaker-badge {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: white;
+}
+
+.timestamp {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--github-text-secondary);
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.duration {
+  font-size: 0.8rem;
+  color: var(--github-text-muted);
+  font-style: italic;
+}
+
+.merged-info {
+  font-size: 0.75rem;
+  color: var(--singapore-blue);
+  background: var(--github-bg-tertiary);
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--singapore-blue);
+  margin-left: 0.5rem;
+}
+
+.emotion-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.emotion-badge {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  color: var(--github-text);
+}
+
+.confidence {
+  font-size: 0.8rem;
+  color: var(--github-text-secondary);
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.segment-text {
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: var(--github-text);
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  border-radius: 8px;
+}
+
+/* MERaLiON Processing Status */
+.meralion-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--github-accent);
+  color: white;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.meralion-badge {
+  background: linear-gradient(135deg, var(--singapore-red), var(--singapore-blue));
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Timeline Section */
+.timeline-section {
+  margin-top: 2rem;
+}
+
+.timeline-section h3 {
+  margin: 0 0 1.5rem 0;
+  color: var(--github-text);
+  font-size: 1.3rem;
+}
+
+.timeline-container {
+  background: var(--github-bg-tertiary);
+  border: 1px solid var(--github-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.timeline {
+  position: relative;
+  height: 60px;
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.timeline-segment {
+  position: absolute;
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.timeline-segment:hover {
+  transform: scaleY(1.1);
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border-color: var(--github-accent);
+}
+
+.timeline-emotion {
+  font-size: 1.2rem;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--github-text-secondary);
+}
+
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .transcript-viewer {
+    padding: 1rem;
+  }
+  
+  .speaker-list {
+    flex-direction: column;
+  }
+  
+  .emotion-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  .segment-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  
+  .segment-info {
+    justify-content: center;
+  }
+  
+  .emotion-info {
+    justify-content: center;
+  }
+  
+  .timeline-segment {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .emotion-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .segment-text {
+    font-size: 1rem;
+  }
+  
+  .timeline {
+    height: 40px;
+  }
+  
+  .timeline-emotion {
+    font-size: 1rem;
+  }
+}

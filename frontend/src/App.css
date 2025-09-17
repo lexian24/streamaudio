@@ -1,0 +1,390 @@
+/* GitHub-style CSS Variables */
+:root {
+  --github-bg: #0d1117;
+  --github-bg-secondary: #161b22;
+  --github-bg-tertiary: #21262d;
+  --github-bg-elevated: #30363d;
+  --github-text: #e6edf3;
+  --github-text-secondary: #7d8590;
+  --github-text-muted: #656d76;
+  --github-border: #30363d;
+  --github-accent: #2f81f7;
+  --github-accent-hover: #1f6feb;
+  --github-success: #238636;
+  --github-danger: #da3633;
+  --github-warning: #bf8700;
+  --github-muted: #484f58;
+  
+  /* Singapore flag colors for MERaLiON branding */
+  --singapore-red: #ee2737;
+  --singapore-blue: #0066cc;
+  
+  /* Spacing and typography */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  --spacing-2xl: 3rem;
+  
+  --font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-size-sm: 14px;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 24px;
+  --font-size-3xl: 32px;
+  
+  --border-radius: 8px;
+  --border-radius-lg: 12px;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family-base);
+  background-color: var(--github-bg);
+  color: var(--github-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.App {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.app-header {
+  background: linear-gradient(135deg, var(--singapore-red) 0%, var(--singapore-blue) 100%);
+  color: white;
+  text-align: center;
+  padding: var(--spacing-2xl) var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.app-header h1 {
+  font-size: var(--font-size-3xl);
+  font-weight: 700;
+  margin-bottom: var(--spacing-sm);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.app-header p {
+  font-size: var(--font-size-lg);
+  opacity: 0.9;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.mode-switcher {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.mode-button {
+  padding: 10px 20px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 25px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  transition: all 0.2s ease;
+  backdrop-filter: blur(5px);
+}
+
+.mode-button:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: white;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.mode-button.active {
+  background-color: rgba(255, 255, 255, 0.9);
+  border-color: white;
+  color: var(--singapore-red);
+}
+
+/* Main content */
+.app-main {
+  flex: 1;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-lg);
+  width: 100%;
+}
+
+/* Error banner */
+.error-banner {
+  background: var(--github-danger);
+  color: white;
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius);
+  margin-bottom: var(--spacing-lg);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.error-icon {
+  font-size: var(--font-size-lg);
+}
+
+.error-text {
+  flex: 1;
+  font-weight: 500;
+}
+
+.error-close {
+  background: none;
+  border: none;
+  color: white;
+  font-size: var(--font-size-xl);
+  cursor: pointer;
+  padding: var(--spacing-xs);
+  border-radius: var(--border-radius);
+  transition: background-color 0.2s;
+}
+
+.error-close:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Feature highlights */
+.feature-highlights {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-2xl);
+}
+
+.feature-card {
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-lg);
+  text-align: center;
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.feature-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--github-accent);
+}
+
+.feature-icon {
+  font-size: var(--font-size-2xl);
+  margin-bottom: var(--spacing-sm);
+  display: block;
+}
+
+.feature-card h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+  color: var(--github-text);
+}
+
+.feature-card p {
+  color: var(--github-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+/* Upload section */
+.upload-section {
+  margin-bottom: var(--spacing-2xl);
+}
+
+/* Processing section */
+.processing-section {
+  text-align: center;
+  margin: var(--spacing-2xl) 0;
+}
+
+.processing-container {
+  background: var(--github-bg-secondary);
+  border: 1px solid var(--github-border);
+  border-radius: var(--border-radius-lg);
+  padding: var(--spacing-2xl);
+  margin-bottom: var(--spacing-lg);
+}
+
+.processing-container h3 {
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--spacing-md);
+  color: var(--singapore-red);
+}
+
+.processing-container p {
+  color: var(--github-text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+/* Spinner animation */
+.spinner {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto var(--spacing-lg);
+  border: 3px solid var(--github-border);
+  border-top: 3px solid var(--singapore-red);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Action buttons */
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  gap: var(--spacing-md);
+}
+
+/* Results section */
+.results-section {
+  margin: var(--spacing-xl) 0;
+}
+
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xl);
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+.results-header h2 {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--github-text);
+}
+
+/* Buttons */
+.reset-button, .new-analysis-button {
+  background: var(--github-accent);
+  color: white;
+  border: none;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.reset-button:hover, .new-analysis-button:hover {
+  background: var(--github-accent-hover);
+  transform: translateY(-1px);
+}
+
+.reset-button:active, .new-analysis-button:active {
+  transform: translateY(0);
+}
+
+/* Footer */
+.app-footer {
+  background: var(--github-bg-secondary);
+  border-top: 1px solid var(--github-border);
+  text-align: center;
+  padding: var(--spacing-lg);
+  margin-top: var(--spacing-2xl);
+}
+
+.app-footer p {
+  color: var(--github-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .app-header {
+    padding: var(--spacing-lg) var(--spacing-md);
+  }
+  
+  .app-header h1 {
+    font-size: var(--font-size-2xl);
+  }
+  
+  .app-header p {
+    font-size: var(--font-size-base);
+  }
+  
+  .app-main {
+    padding: 0 var(--spacing-md);
+  }
+  
+  .feature-highlights {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-md);
+  }
+  
+  .processing-container {
+    padding: var(--spacing-lg);
+  }
+  
+  .results-header {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .action-buttons {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+/* Focus states for accessibility */
+button:focus {
+  outline: 2px solid var(--github-accent);
+  outline-offset: 2px;
+}
+
+/* Loading states */
+.loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Animation for smooth transitions */
+.fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Singapore-themed accents */
+.meralion-accent {
+  background: linear-gradient(45deg, var(--singapore-red), var(--singapore-blue));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 600;
+}
+
+.singapore-flag-gradient {
+  background: linear-gradient(135deg, var(--singapore-red) 0%, white 50%, var(--singapore-blue) 100%);
+}

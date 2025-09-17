@@ -1,0 +1,400 @@
+"""
+FastAudio - Simple Audio Analysis API
+Uses Whisper for transcription, pyannote for speaker diarization, 
+and a lightweight emotion recognition model
+"""
+import uvicorn
+import logging
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import tempfile
+import os
+from pathlib import Path
+from typing import Dict, Any
+import time
+import json
+import numpy as np
+import base64
+from datetime import datetime
+import subprocess
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+from services.audio_processor import AudioProcessor
+from services.auto_recorder import AutoRecorder
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Reduce debug noise from specific modules
+logging.getLogger("services.auto_recorder").setLevel(logging.INFO)
+logging.getLogger("services.voice_activity_detection").setLevel(logging.INFO)
+
+app = FastAPI(title="FastAudio API", description="Audio Analysis with Whisper + pyannote")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Global processor and recorder
+audio_processor = None
+auto_recorder = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the audio processor on startup"""
+    global audio_processor
+    try:
+        logger.info("Starting FastAudio server...")
+        logger.info("AI models will be loaded on first request (lazy loading)")
+        
+        # Initialize auto recorder
+        global auto_recorder
+        auto_recorder = AutoRecorder()
+        
+        logger.info("FastAudio server ready!")
+    except Exception as e:
+        logger.error(f"Failed to start server: {e}")
+        raise
+
+def get_audio_processor():
+    """Lazy load the audio processor"""
+    global audio_processor
+    if audio_processor is None:
+        logger.info("Loading AI models for file processing...")
+        audio_processor = AudioProcessor()
+        logger.info("File processor ready!")
+    return audio_processor
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "FastAudio", 
+        "models": {
+            "audio_processor": "loaded" if audio_processor else "lazy",
+            "auto_recorder": "loaded" if auto_recorder else "not_initialized"
+        }
+    }
+
+@app.post("/analyze")
+async def analyze_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """
+    Analyze uploaded audio file for speakers, transcription, and emotions
+    """
+    processor = get_audio_processor()
+    
+    # Validate file
+    if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm')):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Please upload .wav, .mp3, .m4a, .flac, .ogg, or .webm"
+        )
+    
+    # Check file size (50MB limit)
+    max_size = 50 * 1024 * 1024
+    file_content = await file.read()
+    if len(file_content) > max_size:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
+    
+    try:
+        start_time = time.time()
+        
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp_file:
+            tmp_file.write(file_content)
+            temp_path = tmp_file.name
+        
+        try:
+            # Process audio
+            logger.info(f"Processing audio: {file.filename}")
+            result = processor.process_audio(temp_path)
+            
+            # Add metadata
+            result.update({
+                "filename": file.filename,
+                "processing_time": time.time() - start_time,
+                "status": "completed"
+            })
+            
+            logger.info(f"Audio processing completed in {result['processing_time']:.2f}s")
+            return result
+            
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+                
+    except Exception as e:
+        logger.error(f"Audio processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+@app.get("/models")
+async def get_model_info():
+    """Get information about loaded models"""
+    result = {"status": "lazy loading"}
+    if audio_processor:
+        result["audio_processing"] = audio_processor.get_model_info()
+    return result
+
+# VAD endpoints for automatic recording
+@app.post("/vad/start")
+async def start_vad_monitoring():
+    """Start automatic voice activity monitoring"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    try:
+        auto_recorder.start_monitoring()
+        return {"status": "started", "message": "VAD monitoring started - ready for audio stream"}
+    except Exception as e:
+        logger.error(f"Failed to start VAD monitoring: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start monitoring: {str(e)}")
+
+@app.post("/vad/stop")
+async def stop_vad_monitoring():
+    """Stop automatic voice activity monitoring"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    try:
+        auto_recorder.stop_monitoring()
+        return {"status": "stopped", "message": "VAD monitoring stopped"}
+    except Exception as e:
+        logger.error(f"Failed to stop VAD monitoring: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to stop monitoring: {str(e)}")
+
+@app.get("/vad/status")
+async def get_vad_status():
+    """Get current VAD monitoring status"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    return auto_recorder.get_status()
+
+@app.get("/vad/recordings")
+async def get_recordings():
+    """Get list of recorded meetings"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    recordings = auto_recorder.get_recordings()
+    return {"recordings": recordings, "total": len(recordings)}
+
+@app.post("/vad/upload-recording")
+async def upload_recording(file: UploadFile = File(...)):
+    """Store recording from continuous recorder without processing"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    try:
+        # Validate file format
+        if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm')):
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file format"
+            )
+        
+        # Check file size (50MB limit)
+        max_size = 50 * 1024 * 1024
+        file_content = await file.read()
+        if len(file_content) > max_size:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
+        
+        # Generate filename with timestamp - always save as WAV
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        temp_filename = f"temp_{timestamp}.webm"
+        final_filename = f"recording_{timestamp}.wav"
+        
+        # Save to recordings directory
+        recordings_dir = auto_recorder.recordings_dir
+        temp_filepath = recordings_dir / temp_filename
+        final_filepath = recordings_dir / final_filename
+        
+        # Save temporary file
+        with open(temp_filepath, 'wb') as f:
+            f.write(file_content)
+        
+        try:
+            # Convert webm to wav using ffmpeg
+            subprocess.run([
+                'ffmpeg', '-i', str(temp_filepath), 
+                '-acodec', 'pcm_s16le',  # 16-bit PCM
+                '-ar', '16000',          # 16kHz sample rate
+                '-ac', '1',              # Mono
+                '-y',                    # Overwrite output
+                str(final_filepath)
+            ], capture_output=True, text=True, check=True)
+            
+            # Remove temporary file
+            temp_filepath.unlink()
+            
+            # Get final file size
+            final_size = final_filepath.stat().st_size
+            
+            logger.info(f"✅ Recording converted and stored: {final_filename} ({final_size} bytes)")
+            
+            return {
+                "status": "stored",
+                "filename": final_filename,
+                "path": str(final_filepath),
+                "size": final_size
+            }
+            
+        except subprocess.CalledProcessError as e:
+            # If conversion fails, keep original format
+            logger.warning(f"FFmpeg conversion failed: {e.stderr}")
+            temp_filepath.rename(final_filepath.with_suffix('.webm'))
+            
+            return {
+                "status": "stored",
+                "filename": temp_filename,
+                "path": str(final_filepath.with_suffix('.webm')),
+                "size": len(file_content)
+            }
+        except Exception as e:
+            # Clean up temp file on any error
+            if temp_filepath.exists():
+                temp_filepath.unlink()
+            raise e
+        
+    except Exception as e:
+        logger.error(f"Failed to store recording: {e}")
+        raise HTTPException(status_code=500, detail=f"Storage failed: {str(e)}")
+
+@app.delete("/vad/recordings/{filename}")
+async def delete_recording(filename: str):
+    """Delete a specific recording"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    success = auto_recorder.delete_recording(filename)
+    if success:
+        return {"status": "deleted", "filename": filename}
+    else:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+@app.post("/vad/process-recording/{filename}")
+async def process_recorded_meeting(filename: str):
+    """Process a recorded meeting through the audio pipeline"""
+    if not auto_recorder:
+        raise HTTPException(status_code=500, detail="Auto recorder not initialized")
+    
+    processor = get_audio_processor()
+    
+    # Find the recording file
+    recordings = auto_recorder.get_recordings()
+    recording = next((r for r in recordings if r["filename"] == filename), None)
+    
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    
+    try:
+        start_time = time.time()
+        
+        # Process the recorded audio
+        logger.info(f"Processing recorded meeting: {filename}")
+        result = processor.process_audio(recording["path"])
+        
+        # Add metadata
+        result.update({
+            "filename": filename,
+            "processing_time": time.time() - start_time,
+            "status": "completed",
+            "original_duration": recording["duration"]
+        })
+        
+        logger.info(f"Meeting processing completed in {result['processing_time']:.2f}s")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Meeting processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+# WebSocket endpoint for audio streaming
+@app.websocket("/ws/vad-stream")
+async def websocket_vad_stream(websocket: WebSocket):
+    """WebSocket endpoint for streaming audio to VAD system"""
+    await websocket.accept()
+    logger.info("VAD WebSocket connection established")
+    
+    if not auto_recorder:
+        await websocket.send_text(json.dumps({"error": "Auto recorder not initialized"}))
+        await websocket.close()
+        return
+    
+    try:
+        while True:
+            # Receive message from client
+            message = await websocket.receive_text()
+            data = json.loads(message)
+            
+            if data.get("type") == "audio_chunk":
+                try:
+                    # Decode base64 audio data
+                    audio_b64 = data.get("audio_data", "")
+                    if not audio_b64:
+                        logger.warning("Received empty audio data")
+                        continue
+                        
+                    audio_bytes = base64.b64decode(audio_b64)
+                    
+                    # Convert to numpy array (assuming Float32 format)
+                    audio_chunk = np.frombuffer(audio_bytes, dtype=np.float32)
+                    timestamp = data.get("timestamp", time.time())
+                    
+                    logger.debug(f"📡 Received audio chunk: {len(audio_chunk)} samples")
+                    
+                    # Convert JavaScript timestamp (milliseconds) to Python timestamp (seconds)
+                    original_timestamp = timestamp
+                    if timestamp > 10000000000:  # If timestamp is in milliseconds
+                        timestamp = timestamp / 1000.0
+                    
+                    logger.debug(f"Timestamp conversion: {original_timestamp} -> {timestamp}")
+                    
+                    # Process through AutoRecorder VAD
+                    result = auto_recorder.process_audio_chunk(audio_chunk, timestamp)
+                    
+                    # Send status back to client
+                    response = {
+                        "type": "vad_status",
+                        "result": result,
+                        "timestamp": timestamp
+                    }
+                    await websocket.send_text(json.dumps(response))
+                    
+                except Exception as e:
+                    logger.error(f"Error processing audio chunk: {e}")
+                    error_response = {
+                        "type": "error",
+                        "message": f"Audio processing error: {str(e)}"
+                    }
+                    await websocket.send_text(json.dumps(error_response))
+            
+            elif data.get("type") == "ping":
+                # Respond to ping with pong
+                await websocket.send_text(json.dumps({"type": "pong"}))
+                
+    except WebSocketDisconnect:
+        logger.info("VAD WebSocket connection closed")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except:
+            pass
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
