@@ -18,6 +18,20 @@ from .config import (
     create_tables,
     DatabaseManager
 )
+from .services import (
+    DatabaseService,
+    RecordingService,
+    ProcessingResultService,
+    SpeakerService,
+    SpeakerSegmentService
+)
+from .dependencies import (
+    get_database_session,
+    get_database_service,
+    get_recording_service,
+    get_processing_result_service,
+    get_speaker_service
+)
 
 __all__ = [
     # Models
@@ -33,9 +47,23 @@ __all__ = [
     "SessionLocal",
     "AsyncSessionLocal",
     
-    # Dependency functions
+    # Legacy dependency functions
     "get_db_session",
     "get_async_db_session",
+    
+    # Service layer
+    "DatabaseService",
+    "RecordingService",
+    "ProcessingResultService",
+    "SpeakerService",
+    "SpeakerSegmentService",
+    
+    # FastAPI dependencies
+    "get_database_session",
+    "get_database_service",
+    "get_recording_service",
+    "get_processing_result_service",
+    "get_speaker_service",
     
     # Utility functions
     "init_database",

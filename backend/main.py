@@ -24,6 +24,8 @@ load_dotenv()
 
 from services.audio_processor import AudioProcessor
 from services.auto_recorder import AutoRecorder
+from database import init_database, get_database_service, get_recording_service
+from fastapi import Depends
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +56,12 @@ async def startup_event():
     global audio_processor
     try:
         logger.info("Starting FastAudio server...")
+        
+        # Initialize database
+        logger.info("Initializing database...")
+        init_database()
+        logger.info("Database initialized successfully!")
+        
         logger.info("AI models will be loaded on first request (lazy loading)")
         
         # Initialize auto recorder
@@ -194,7 +202,10 @@ async def get_recordings():
     return {"recordings": recordings, "total": len(recordings)}
 
 @app.post("/vad/upload-recording")
-async def upload_recording(file: UploadFile = File(...)):
+async def upload_recording(
+    file: UploadFile = File(...),
+    db_service = Depends(get_database_service)
+):
     """Store recording from continuous recorder without processing"""
     if not auto_recorder:
         raise HTTPException(status_code=500, detail="Auto recorder not initialized")
@@ -241,8 +252,36 @@ async def upload_recording(file: UploadFile = File(...)):
             # Remove temporary file
             temp_filepath.unlink()
             
-            # Get final file size
+            # Get final file size and metadata
             final_size = final_filepath.stat().st_size
+            
+            # Get audio metadata using librosa
+            import librosa
+            try:
+                duration = librosa.get_duration(path=str(final_filepath))
+                sr = librosa.get_samplerate(str(final_filepath))
+            except Exception:
+                duration = None
+                sr = 16000  # Default sample rate
+            
+            # Store recording metadata in database
+            try:
+                recording = await db_service.recordings.create_recording(
+                    filename=final_filename,
+                    original_filename=file.filename,
+                    file_path=str(final_filepath),
+                    file_size=final_size,
+                    duration=duration,
+                    sample_rate=sr,
+                    channels=1,  # Mono after conversion
+                    format="wav"
+                )
+                
+                logger.info(f"✅ Recording stored in database: ID {recording.id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to store recording metadata in database: {e}")
+                # Continue even if database storage fails
             
             logger.info(f"✅ Recording converted and stored: {final_filename} ({final_size} bytes)")
             
@@ -250,7 +289,9 @@ async def upload_recording(file: UploadFile = File(...)):
                 "status": "stored",
                 "filename": final_filename,
                 "path": str(final_filepath),
-                "size": final_size
+                "size": final_size,
+                "duration": duration,
+                "recording_id": recording.id if 'recording' in locals() else None
             }
             
         except subprocess.CalledProcessError as e:
@@ -287,7 +328,10 @@ async def delete_recording(filename: str):
         raise HTTPException(status_code=404, detail="Recording not found")
 
 @app.post("/vad/process-recording/{filename}")
-async def process_recorded_meeting(filename: str):
+async def process_recorded_meeting(
+    filename: str,
+    db_service = Depends(get_database_service)
+):
     """Process a recorded meeting through the audio pipeline"""
     if not auto_recorder:
         raise HTTPException(status_code=500, detail="Auto recorder not initialized")
@@ -304,24 +348,202 @@ async def process_recorded_meeting(filename: str):
     try:
         start_time = time.time()
         
+        # Find recording in database by filename
+        recordings_list = await db_service.recordings.get_recordings(limit=100)
+        db_recording = next((r for r in recordings_list if r.filename == filename), None)
+        
         # Process the recorded audio
         logger.info(f"Processing recorded meeting: {filename}")
         result = processor.process_audio(recording["path"])
         
+        processing_time = time.time() - start_time
+        
+        # Store processing results in database if we have the recording
+        if db_recording:
+            try:
+                # Create processing result
+                processing_result = await db_service.processing_results.create_processing_result(
+                    recording_id=db_recording.id,
+                    transcription=result.get("transcription"),
+                    confidence_score=result.get("confidence"),
+                    diarization_data=result.get("diarization"),
+                    emotions_data=result.get("emotions"),
+                    model_versions={
+                        "whisper_model": "base",
+                        "diarization_model": "pyannote/speaker-diarization-3.1",
+                        "emotion_model": "custom"
+                    }
+                )
+                
+                # Extract and create speaker segments if diarization data exists
+                if result.get("diarization") and "segments" in result["diarization"]:
+                    segments_data = []
+                    for segment in result["diarization"]["segments"]:
+                        segments_data.append({
+                            "start_time": segment["start"],
+                            "end_time": segment["end"],
+                            "speaker_label": segment["speaker"],
+                            "text": segment.get("text", ""),
+                            "confidence": segment.get("confidence")
+                        })
+                    
+                    await db_service.speaker_segments.create_speaker_segments(
+                        processing_result.id,
+                        segments_data
+                    )
+                
+                logger.info(f"✅ Processing results stored in database: ID {processing_result.id}")
+                result["processing_result_id"] = processing_result.id
+                
+            except Exception as e:
+                logger.error(f"Failed to store processing results in database: {e}")
+                # Continue even if database storage fails
+        
         # Add metadata
         result.update({
             "filename": filename,
-            "processing_time": time.time() - start_time,
+            "processing_time": processing_time,
             "status": "completed",
-            "original_duration": recording["duration"]
+            "original_duration": recording["duration"],
+            "recording_id": db_recording.id if db_recording else None
         })
         
-        logger.info(f"Meeting processing completed in {result['processing_time']:.2f}s")
+        logger.info(f"Meeting processing completed in {processing_time:.2f}s")
         return result
         
     except Exception as e:
         logger.error(f"Meeting processing failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+# Database API endpoints
+@app.get("/api/recordings")
+async def get_all_recordings(
+    limit: int = 50,
+    offset: int = 0,
+    format_filter: str = None,
+    db_service = Depends(get_database_service)
+):
+    """Get all recordings with pagination"""
+    try:
+        recordings = await db_service.recordings.get_recordings(
+            limit=limit,
+            offset=offset,
+            format_filter=format_filter
+        )
+        
+        # Convert to dict format
+        recordings_data = []
+        for recording in recordings:
+            recordings_data.append({
+                "id": recording.id,
+                "filename": recording.filename,
+                "original_filename": recording.original_filename,
+                "file_path": recording.file_path,
+                "file_size": recording.file_size,
+                "duration": recording.duration,
+                "sample_rate": recording.sample_rate,
+                "channels": recording.channels,
+                "format": recording.format,
+                "created_at": recording.created_at.isoformat() if recording.created_at else None,
+                "updated_at": recording.updated_at.isoformat() if recording.updated_at else None
+            })
+        
+        return {
+            "recordings": recordings_data,
+            "total": len(recordings_data),
+            "limit": limit,
+            "offset": offset
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get recordings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get recordings: {str(e)}")
+
+@app.get("/api/recordings/{recording_id}")
+async def get_recording(
+    recording_id: int,
+    db_service = Depends(get_database_service)
+):
+    """Get a specific recording with its processing results"""
+    try:
+        recording = await db_service.recordings.get_recording(recording_id)
+        if not recording:
+            raise HTTPException(status_code=404, detail="Recording not found")
+        
+        # Get processing results for this recording
+        results = await db_service.processing_results.get_results_by_recording(recording_id)
+        
+        recording_data = {
+            "id": recording.id,
+            "filename": recording.filename,
+            "original_filename": recording.original_filename,
+            "file_path": recording.file_path,
+            "file_size": recording.file_size,
+            "duration": recording.duration,
+            "sample_rate": recording.sample_rate,
+            "channels": recording.channels,
+            "format": recording.format,
+            "created_at": recording.created_at.isoformat() if recording.created_at else None,
+            "updated_at": recording.updated_at.isoformat() if recording.updated_at else None,
+            "processing_results": []
+        }
+        
+        # Add processing results
+        for result in results:
+            segments = await db_service.speaker_segments.get_segments_by_result(result.id)
+            
+            recording_data["processing_results"].append({
+                "id": result.id,
+                "transcription": result.transcription,
+                "confidence_score": result.confidence_score,
+                "diarization_json": result.diarization_json,
+                "num_speakers": result.num_speakers,
+                "emotions_json": result.emotions_json,
+                "dominant_emotion": result.dominant_emotion,
+                "emotion_confidence": result.emotion_confidence,
+                "processing_duration": result.processing_duration,
+                "model_versions": result.model_versions,
+                "status": result.status,
+                "processed_at": result.processed_at.isoformat() if result.processed_at else None,
+                "speaker_segments": [
+                    {
+                        "id": seg.id,
+                        "start_time": seg.start_time,
+                        "end_time": seg.end_time,
+                        "duration": seg.duration,
+                        "speaker_label": seg.speaker_label,
+                        "segment_text": seg.segment_text,
+                        "confidence": seg.confidence,
+                        "speaker_name": seg.speaker.name if seg.speaker else None
+                    }
+                    for seg in segments
+                ]
+            })
+        
+        return recording_data
+        
+    except Exception as e:
+        logger.error(f"Failed to get recording: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get recording: {str(e)}")
+
+@app.get("/api/processing-results")
+async def get_processing_results(
+    limit: int = 50,
+    offset: int = 0,
+    db_service = Depends(get_database_service)
+):
+    """Get recent processing results"""
+    try:
+        # This would require adding a method to get all results
+        # For now, we'll return empty as we focus on recording-based queries
+        return {
+            "message": "Use /api/recordings/{recording_id} to get processing results for a specific recording",
+            "endpoint": "/api/recordings/{recording_id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get processing results: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get processing results: {str(e)}")
 
 # WebSocket endpoint for audio streaming
 @app.websocket("/ws/vad-stream")
