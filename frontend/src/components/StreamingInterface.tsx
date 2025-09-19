@@ -3,6 +3,7 @@ import { useMicrophone } from '../hooks/useMicrophone';
 import { useVadWebSocket } from '../hooks/useVadWebSocket';
 import { useContinuousRecorder } from '../hooks/useContinuousRecorder';
 import TranscriptViewer from './TranscriptViewer';
+import RecordingHistory from './RecordingHistory';
 import '../styles/StreamingInterface.css';
 import { AudioAnalysisResult } from '../types/audio';
 
@@ -454,6 +455,14 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
           <TranscriptViewer result={processedResult} />
         </div>
       )}
+
+      {/* Recording History Section */}
+      <RecordingHistory 
+        onRecordingSelect={(recording) => {
+          console.log('Selected recording:', recording);
+          // You can add logic here to display selected recording details
+        }}
+      />
 
     </div>
   );
