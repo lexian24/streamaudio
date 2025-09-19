@@ -372,6 +372,9 @@ async def process_recorded_meeting(
         recordings_list = await db_service.recordings.get_recordings(limit=100)
         db_recording = next((r for r in recordings_list if r.filename == filename), None)
         
+        logger.info(f"DEBUG: Looking for recording with filename: {filename}")
+        logger.info(f"DEBUG: Found db_recording: {db_recording.id if db_recording else None}")
+        
         # Process the recorded audio
         logger.info(f"Processing recorded meeting: {filename}")
         result = processor.process_audio(recording["path"])
@@ -381,13 +384,66 @@ async def process_recorded_meeting(
         # Store processing results in database if we have the recording
         if db_recording:
             try:
+                # Extract data from the audio processor result
+                segments = result.get("segments", [])
+                speakers = result.get("speakers", [])
+                
+                # Build transcription from all segments
+                transcription_parts = []
+                emotions_list = []
+                total_confidence = 0
+                confidence_count = 0
+                
+                for segment in segments:
+                    if segment.get("text"):
+                        transcription_parts.append(segment["text"])
+                    if segment.get("emotion"):
+                        emotions_list.append({
+                            "emotion": segment["emotion"],
+                            "confidence": segment.get("emotion_confidence", 0),
+                            "speaker_id": segment["speaker_id"],
+                            "start_time": segment["start_time"],
+                            "end_time": segment["end_time"]
+                        })
+                    if segment.get("emotion_confidence"):
+                        total_confidence += segment["emotion_confidence"]
+                        confidence_count += 1
+                
+                # Create combined transcription
+                full_transcription = " ".join(transcription_parts) if transcription_parts else None
+                
+                # Calculate average confidence and dominant emotion
+                avg_confidence = total_confidence / confidence_count if confidence_count > 0 else None
+                dominant_emotion = None
+                emotion_confidence = None
+                
+                if emotions_list:
+                    # Find most confident emotion
+                    best_emotion = max(emotions_list, key=lambda x: x["confidence"])
+                    dominant_emotion = best_emotion["emotion"]
+                    emotion_confidence = best_emotion["confidence"]
+                
+                # Debug logging
+                logger.info(f"DEBUG: full_transcription = {full_transcription}")
+                logger.info(f"DEBUG: avg_confidence = {avg_confidence}")
+                logger.info(f"DEBUG: dominant_emotion = {dominant_emotion}")
+                logger.info(f"DEBUG: speakers count = {len(speakers)}")
+                logger.info(f"DEBUG: segments count = {len(segments)}")
+                
                 # Create processing result
                 processing_result = await db_service.processing_results.create_processing_result(
                     recording_id=db_recording.id,
-                    transcription=result.get("transcription"),
-                    confidence_score=result.get("confidence"),
-                    diarization_data=result.get("diarization"),
-                    emotions_data=result.get("emotions"),
+                    transcription=full_transcription,
+                    confidence_score=avg_confidence,
+                    diarization_data={
+                        "speakers": speakers,
+                        "total_speakers": result.get("total_speakers", 0)
+                    },
+                    emotions_data={
+                        "emotions": emotions_list,
+                        "dominant_emotion": dominant_emotion,
+                        "confidence": emotion_confidence
+                    } if emotions_list else None,
                     model_versions={
                         "whisper_model": "base",
                         "diarization_model": "pyannote/speaker-diarization-3.1",
@@ -395,16 +451,16 @@ async def process_recorded_meeting(
                     }
                 )
                 
-                # Extract and create speaker segments if diarization data exists
-                if result.get("diarization") and "segments" in result["diarization"]:
+                # Extract and create speaker segments from the new data structure
+                if segments:
                     segments_data = []
-                    for segment in result["diarization"]["segments"]:
+                    for segment in segments:
                         segments_data.append({
-                            "start_time": segment["start"],
-                            "end_time": segment["end"],
-                            "speaker_label": segment["speaker"],
+                            "start_time": segment["start_time"],
+                            "end_time": segment["end_time"],
+                            "speaker_label": segment["speaker_id"],
                             "text": segment.get("text", ""),
-                            "confidence": segment.get("confidence")
+                            "confidence": segment.get("emotion_confidence")
                         })
                     
                     await db_service.speaker_segments.create_speaker_segments(

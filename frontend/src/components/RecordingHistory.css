@@ -244,6 +244,38 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
+.no-result {
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+}
+
+.no-transcription p,
+.processing-pending p,
+.processing-failed p {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+.processing-pending p {
+  background: rgba(241, 196, 15, 0.1);
+  border-left: 3px solid #f1c40f;
+}
+
+.processing-failed p {
+  background: rgba(231, 76, 60, 0.1);
+  border-left: 3px solid #ff6b6b;
+}
+
+.processing-time {
+  margin: 12px 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9em;
+}
+
 .diarization,
 .emotion {
   margin: 12px 0;

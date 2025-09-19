@@ -53,6 +53,8 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
   const [error, setError] = useState<string | null>(null);
   const [expandedRecording, setExpandedRecording] = useState<number | null>(null);
 
+  const API_BASE = 'http://localhost:8000';
+
   useEffect(() => {
     fetchRecordings();
   }, []);
@@ -60,7 +62,7 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
   const fetchRecordings = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/recordings');
+      const response = await fetch(`${API_BASE}/api/recordings`);
       if (!response.ok) {
         throw new Error('Failed to fetch recordings');
       }
@@ -75,7 +77,7 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
 
   const fetchRecordingDetails = async (recordingId: number) => {
     try {
-      const response = await fetch(`/api/recordings/${recordingId}`);
+      const response = await fetch(`${API_BASE}/api/recordings/${recordingId}`);
       if (!response.ok) {
         throw new Error('Failed to fetch recording details');
       }
@@ -171,12 +173,12 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                     {recording.original_filename || recording.filename}
                   </div>
                   <div className="recording-meta">
-                    {formatDuration(recording.duration)} • {formatFileSize(recording.file_size)} • {formatDateTime(recording.created_at)}
+                    {recording.duration ? formatDuration(recording.duration) : 'Unknown duration'} • {recording.file_size ? formatFileSize(recording.file_size) : 'Unknown size'} • {recording.created_at ? formatDateTime(recording.created_at) : 'Unknown date'}
                   </div>
                 </div>
                 <div className="recording-stats">
-                  <span className="format-badge">{recording.format.toUpperCase()}</span>
-                  {recording.processing_results.length > 0 && (
+                  <span className="format-badge">{recording.format?.toUpperCase() || 'UNKNOWN'}</span>
+                  {recording.processing_results && recording.processing_results.length > 0 && (
                     <span className="processed-badge">
                       {recording.processing_results.length} analysis
                     </span>
@@ -199,7 +201,7 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                     </div>
                   </div>
 
-                  {recording.processing_results.length > 0 && (
+                  {recording.processing_results && recording.processing_results.length > 0 && (
                     <div className="processing-results">
                       <h4>Processing Results ({recording.processing_results.length})</h4>
                       {recording.processing_results.map((result) => (
@@ -213,47 +215,86 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                             </span>
                           </div>
                           
-                          {result.transcription && (
-                            <div className="transcription">
-                              <strong>Transcription:</strong>
-                              <p>{result.transcription}</p>
-                              {result.confidence_score && (
-                                <small>Confidence: {(result.confidence_score * 100).toFixed(1)}%</small>
+                          {result.status === 'completed' && (
+                            <>
+                              {result.transcription ? (
+                                <div className="transcription">
+                                  <strong>Transcription:</strong>
+                                  <p>{result.transcription}</p>
+                                  {result.confidence_score && (
+                                    <small>Confidence: {(result.confidence_score * 100).toFixed(1)}%</small>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="no-transcription">
+                                  <strong>Transcription:</strong>
+                                  <p className="no-result">No transcription generated or audio was silent</p>
+                                </div>
                               )}
-                            </div>
-                          )}
 
-                          {result.num_speakers && (
-                            <div className="diarization">
-                              <strong>Speakers Detected:</strong> {result.num_speakers}
-                            </div>
-                          )}
-
-                          {result.dominant_emotion && (
-                            <div className="emotion">
-                              <strong>Dominant Emotion:</strong> {result.dominant_emotion}
-                              {result.emotion_confidence && (
-                                <span> ({(result.emotion_confidence * 100).toFixed(1)}%)</span>
+                              {result.num_speakers ? (
+                                <div className="diarization">
+                                  <strong>Speakers Detected:</strong> {result.num_speakers}
+                                </div>
+                              ) : (
+                                <div className="diarization">
+                                  <strong>Speaker Diarization:</strong> <span className="no-result">No speakers detected</span>
+                                </div>
                               )}
-                            </div>
-                          )}
 
-                          {result.speaker_segments.length > 0 && (
-                            <div className="speaker-segments">
-                              <strong>Speaker Segments:</strong>
-                              <div className="segments-list">
-                                {result.speaker_segments.map((segment) => (
-                                  <div key={segment.id} className="segment">
-                                    <span className="speaker">{segment.speaker_name || segment.speaker_label}</span>
-                                    <span className="time">
-                                      {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
-                                    </span>
-                                    {segment.segment_text && (
-                                      <span className="text">"{segment.segment_text}"</span>
-                                    )}
+                              {result.dominant_emotion ? (
+                                <div className="emotion">
+                                  <strong>Dominant Emotion:</strong> {result.dominant_emotion}
+                                  {result.emotion_confidence && (
+                                    <span> ({(result.emotion_confidence * 100).toFixed(1)}%)</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="emotion">
+                                  <strong>Emotion Analysis:</strong> <span className="no-result">No emotions detected</span>
+                                </div>
+                              )}
+
+                              {result.speaker_segments && result.speaker_segments.length > 0 ? (
+                                <div className="speaker-segments">
+                                  <strong>Speaker Segments:</strong>
+                                  <div className="segments-list">
+                                    {result.speaker_segments.map((segment) => (
+                                      <div key={segment.id} className="segment">
+                                        <span className="speaker">{segment.speaker_name || segment.speaker_label}</span>
+                                        <span className="time">
+                                          {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
+                                        </span>
+                                        {segment.segment_text && (
+                                          <span className="text">"{segment.segment_text}"</span>
+                                        )}
+                                      </div>
+                                    ))}
                                   </div>
-                                ))}
-                              </div>
+                                </div>
+                              ) : (
+                                <div className="speaker-segments">
+                                  <strong>Speaker Segments:</strong> <span className="no-result">No speaker segments available</span>
+                                </div>
+                              )}
+
+                              {result.processing_duration && (
+                                <div className="processing-time">
+                                  <strong>Processing Time:</strong> {result.processing_duration.toFixed(2)}s
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {result.status === 'pending' && (
+                            <div className="processing-pending">
+                              <p>⏳ Processing in progress...</p>
+                            </div>
+                          )}
+
+                          {result.status === 'failed' && (
+                            <div className="processing-failed">
+                              <p>❌ Processing failed. Please try reprocessing this recording.</p>
                             </div>
                           )}
                         </div>
