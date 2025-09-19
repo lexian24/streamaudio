@@ -5,6 +5,7 @@ and a lightweight emotion recognition model
 """
 import uvicorn
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
@@ -35,25 +36,20 @@ logger = logging.getLogger(__name__)
 logging.getLogger("services.auto_recorder").setLevel(logging.INFO)
 logging.getLogger("services.voice_activity_detection").setLevel(logging.INFO)
 
-app = FastAPI(title="FastAudio API", description="Audio Analysis with Whisper + pyannote")
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Global processor and recorder
 audio_processor = None
 auto_recorder = None
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the audio processor on startup"""
-    global audio_processor
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for FastAPI application.
+    Handles startup and shutdown events.
+    """
+    global audio_processor, auto_recorder
+    
+    # Startup
     try:
         logger.info("Starting FastAudio server...")
         
@@ -65,13 +61,37 @@ async def startup_event():
         logger.info("AI models will be loaded on first request (lazy loading)")
         
         # Initialize auto recorder
-        global auto_recorder
         auto_recorder = AutoRecorder()
         
         logger.info("FastAudio server ready!")
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
         raise
+    
+    yield  # Server is running
+    
+    # Shutdown
+    logger.info("Shutting down FastAudio server...")
+    if auto_recorder:
+        auto_recorder.stop_monitoring()
+    logger.info("FastAudio server shutdown complete")
+
+
+app = FastAPI(
+    title="FastAudio API", 
+    description="Audio Analysis with Whisper + pyannote",
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 def get_audio_processor():
     """Lazy load the audio processor"""
