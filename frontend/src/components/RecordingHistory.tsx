@@ -258,15 +258,46 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                               {result.speaker_segments && result.speaker_segments.length > 0 ? (
                                 <div className="speaker-segments">
                                   <strong>Speaker Segments:</strong>
+                                  
+                                  {/* Show identified speakers summary */}
+                                  {result.speaker_segments.some(s => s.speaker_name) && (
+                                    <div className="identified-speakers-summary">
+                                      <strong>Identified Speakers:</strong> {
+                                        Array.from(new Set(
+                                          result.speaker_segments
+                                            .filter(s => s.speaker_name)
+                                            .map(s => s.speaker_name)
+                                        )).join(', ')
+                                      }
+                                    </div>
+                                  )}
+                                  
                                   <div className="segments-list">
                                     {result.speaker_segments.map((segment) => (
-                                      <div key={segment.id} className="segment">
-                                        <span className="speaker">{segment.speaker_name || segment.speaker_label}</span>
+                                      <div key={segment.id} className={`segment ${segment.speaker_name ? 'identified' : 'unidentified'}`}>
+                                        <span className="speaker">
+                                          {segment.speaker_name ? (
+                                            <>
+                                              <span className="speaker-name">{segment.speaker_name}</span>
+                                              <span className="confidence-indicator">✓</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <span className="speaker-label">{segment.speaker_label}</span>
+                                              <span className="unidentified-indicator">?</span>
+                                            </>
+                                          )}
+                                        </span>
                                         <span className="time">
                                           {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
                                         </span>
                                         {segment.segment_text && (
                                           <span className="text">"{segment.segment_text}"</span>
+                                        )}
+                                        {segment.confidence && (
+                                          <span className="segment-confidence">
+                                            {(segment.confidence * 100).toFixed(0)}%
+                                          </span>
                                         )}
                                       </div>
                                     ))}

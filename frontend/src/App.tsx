@@ -3,9 +3,10 @@ import './App.css';
 import AudioUploader from './components/AudioUploader';
 import TranscriptViewer from './components/TranscriptViewer';
 import StreamingInterface from './components/StreamingInterface';
+import SpeakerManagement from './components/SpeakerManagement';
 import { AudioAnalysisResult } from './types/audio';
 
-type ViewMode = 'upload' | 'streaming';
+type ViewMode = 'upload' | 'streaming' | 'speakers';
 
 function App() {
   const [analysisResult, setAnalysisResult] = useState<AudioAnalysisResult | null>(null);
@@ -46,8 +47,17 @@ function App() {
     handleReset();
   };
 
+  const switchToSpeakers = () => {
+    setViewMode('speakers');
+    handleReset();
+  };
+
   if (viewMode === 'streaming') {
     return <StreamingInterface onBack={switchToUpload} />;
+  }
+
+  if (viewMode === 'speakers') {
+    return <SpeakerManagement onBack={switchToUpload} />;
   }
 
   return (
@@ -67,6 +77,12 @@ function App() {
             onClick={switchToStreaming}
           >
             🎤 Auto Recording
+          </button>
+          <button 
+            className="mode-button"
+            onClick={switchToSpeakers}
+          >
+            👥 Speaker Management
           </button>
         </div>
       </header>

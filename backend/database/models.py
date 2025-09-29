@@ -7,7 +7,7 @@ processing results, speaker information, and speaker segments.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean, JSON, LargeBinary, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -100,6 +100,7 @@ class Speaker(Base):
     
     # Speaker identification data
     embedding_path = Column(String(500), nullable=True)  # Path to speaker embedding file
+    embeddings_data = Column(JSON, nullable=True)  # JSON data containing embeddings and metadata
     enrollment_recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=True)
     
     # Metadata
@@ -152,3 +153,178 @@ class SpeakerSegment(Base):
     def __repr__(self):
         speaker_name = self.speaker.name if self.speaker else "Unknown"
         return f"<SpeakerSegment(id={self.id}, speaker='{speaker_name}', {self.start_time:.1f}s-{self.end_time:.1f}s)>"
+
+
+class PersistentSpeaker(Base):
+    """
+    Model for persistent speaker identities that maintain consistency across recordings.
+    
+    Unlike session-based speakers (SPEAKER_00, SPEAKER_01), persistent speakers have
+    globally unique IDs that remain consistent across all recordings and sessions.
+    """
+    __tablename__ = "persistent_speakers"
+    
+    # Use string ID for human-readable persistent speaker identifiers
+    id = Column(String(20), primary_key=True, index=True)  # e.g., "SPEAKER_001"
+    name = Column(String(100), nullable=True, index=True)  # Optional human name
+    
+    # Enrollment metadata
+    first_seen_recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=True)
+    enrollment_method = Column(String(20), default="manual")  # manual, auto_recording, auto_upload
+    enrollment_quality = Column(Float, nullable=True)  # Overall enrollment quality score
+    
+    # Usage statistics
+    total_speaking_time = Column(Float, default=0.0)  # Total speaking time across all recordings
+    recordings_count = Column(Integer, default=0)  # Number of recordings this speaker appears in
+    segments_count = Column(Integer, default=0)  # Total number of segments
+    
+    # Speaker recognition settings
+    confidence_threshold = Column(Float, default=0.75)  # Minimum confidence for auto-assignment
+    is_active = Column(Boolean, default=True)  # Whether to include in recognition
+    
+    # Compressed average embedding for fast similarity search
+    avg_embedding = Column(LargeBinary, nullable=True)  # Compressed numpy array
+    embedding_metadata = Column(JSON, nullable=True)  # Quality scores, consistency metrics
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    first_seen_recording = relationship("Recording")
+    embeddings = relationship("SpeakerEmbedding", back_populates="speaker", cascade="all, delete-orphan")
+    mappings = relationship("SpeakerMapping", back_populates="persistent_speaker", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        display_name = self.name or self.id
+        return f"<PersistentSpeaker(id='{self.id}', name='{display_name}', recordings={self.recordings_count})>"
+
+
+class SpeakerEmbedding(Base):
+    """
+    Model for storing multiple embeddings per persistent speaker.
+    
+    Each persistent speaker can have multiple enrollment samples to improve
+    recognition robustness. Stores individual embeddings with quality metrics.
+    """
+    __tablename__ = "speaker_embeddings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    speaker_id = Column(String(20), ForeignKey("persistent_speakers.id"), nullable=False)
+    
+    # Embedding data
+    embedding = Column(LargeBinary, nullable=False)  # Compressed numpy array
+    embedding_dim = Column(Integer, default=192)  # ECAPA-TDNN dimension
+    
+    # Quality metrics
+    quality_score = Column(Float, nullable=True)  # 0-1 quality score
+    snr_db = Column(Float, nullable=True)  # Signal-to-noise ratio
+    duration = Column(Float, nullable=True)  # Source audio duration in seconds
+    
+    # Source information
+    source_recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=True)
+    source_segment_start = Column(Float, nullable=True)  # Start time in source recording
+    source_segment_end = Column(Float, nullable=True)  # End time in source recording
+    enrollment_method = Column(String(20), default="manual")  # manual, auto_segment, upload
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    speaker = relationship("PersistentSpeaker", back_populates="embeddings")
+    source_recording = relationship("Recording")
+    
+    def __repr__(self):
+        return f"<SpeakerEmbedding(id={self.id}, speaker='{self.speaker_id}', quality={self.quality_score:.3f})>"
+
+# Index for fast embedding lookups
+Index('idx_speaker_embeddings_speaker_quality', SpeakerEmbedding.speaker_id, SpeakerEmbedding.quality_score)
+
+
+class SpeakerMapping(Base):
+    """
+    Model for mapping session speakers to persistent speakers.
+    
+    Tracks the assignment of session-based diarization labels (SPEAKER_00, SPEAKER_01)
+    to persistent speaker identities for each recording. Enables consistent speaker
+    identification across different recording sessions.
+    """
+    __tablename__ = "speaker_mappings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=False)
+    
+    # Session speaker information (from diarization)
+    session_speaker_label = Column(String(20), nullable=False)  # e.g., "SPEAKER_00"
+    
+    # Persistent speaker assignment
+    persistent_speaker_id = Column(String(20), ForeignKey("persistent_speakers.id"), nullable=False)
+    
+    # Assignment metadata
+    assignment_confidence = Column(Float, nullable=True)  # Confidence score for this assignment
+    assignment_method = Column(String(20), default="auto")  # auto, manual, reviewed
+    similarity_score = Column(Float, nullable=True)  # Best embedding similarity score
+    
+    # Assignment status
+    is_verified = Column(Boolean, default=False)  # Whether assignment has been manually verified
+    needs_review = Column(Boolean, default=False)  # Whether assignment needs manual review
+    
+    # Timestamps
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    recording = relationship("Recording")
+    persistent_speaker = relationship("PersistentSpeaker", back_populates="mappings")
+    
+    def __repr__(self):
+        return f"<SpeakerMapping(recording={self.recording_id}, {self.session_speaker_label}→{self.persistent_speaker_id})>"
+
+# Composite index for fast lookup of mappings by recording and session speaker
+Index('idx_speaker_mappings_recording_session', SpeakerMapping.recording_id, SpeakerMapping.session_speaker_label)
+
+
+class SpeakerReviewQueue(Base):
+    """
+    Model for tracking speaker assignments that need manual review.
+    
+    When automatic speaker recognition produces ambiguous results (medium confidence),
+    assignments are queued for manual review. This table tracks pending reviews
+    and user decisions.
+    """
+    __tablename__ = "speaker_review_queue"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=False)
+    session_speaker_label = Column(String(20), nullable=False)
+    
+    # Suggested assignments (can have multiple candidates)
+    suggested_assignments = Column(JSON, nullable=True)  # List of {speaker_id, confidence, similarity}
+    
+    # Review status
+    status = Column(String(20), default="pending")  # pending, reviewed, dismissed
+    priority = Column(Integer, default=1)  # 1=high, 2=medium, 3=low
+    
+    # Additional context for review
+    segment_count = Column(Integer, nullable=True)  # Number of segments for this speaker
+    total_duration = Column(Float, nullable=True)  # Total speaking time
+    audio_quality = Column(Float, nullable=True)  # Average audio quality
+    
+    # Review resolution
+    resolved_speaker_id = Column(String(20), ForeignKey("persistent_speakers.id"), nullable=True)
+    resolution_method = Column(String(20), nullable=True)  # assigned_existing, created_new, dismissed
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    recording = relationship("Recording")
+    resolved_speaker = relationship("PersistentSpeaker")
+    
+    def __repr__(self):
+        return f"<SpeakerReviewQueue(id={self.id}, recording={self.recording_id}, speaker={self.session_speaker_label}, status='{self.status}')>"
+
+# Index for efficient queue processing
+Index('idx_review_queue_status_priority', SpeakerReviewQueue.status, SpeakerReviewQueue.priority)

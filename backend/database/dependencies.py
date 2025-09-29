@@ -67,3 +67,17 @@ async def get_speaker_service(
     Dependency to provide speaker service for speaker operations.
     """
     return SpeakerService(db)
+
+
+def create_database_service():
+    """
+    Create a database service synchronously for use in audio processor initialization.
+    Note: This creates a new session that should be used carefully.
+    """
+    import asyncio
+    
+    async def _get_service():
+        async with AsyncSessionLocal() as session:
+            return DatabaseService(session)
+    
+    return asyncio.run(_get_service())

@@ -1,0 +1,367 @@
+.speaker-management {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  min-height: 80vh;
+}
+
+.speaker-header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.speaker-header h1 {
+  color: white;
+  margin: 10px 0;
+  font-size: 2em;
+}
+
+.speaker-header p {
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+}
+
+.back-button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1em;
+  transition: all 0.3s ease;
+  margin-bottom: 20px;
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.loading {
+  text-align: center;
+  padding: 60px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 1.2em;
+}
+
+.error-banner {
+  background: rgba(231, 76, 60, 0.2);
+  border: 1px solid rgba(231, 76, 60, 0.5);
+  color: #ff6b6b;
+  padding: 15px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.error-close {
+  background: none;
+  border: none;
+  color: #ff6b6b;
+  font-size: 1.2em;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.speaker-actions {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 30px;
+  justify-content: center;
+}
+
+.enroll-button, .refresh-button {
+  background: rgba(74, 144, 226, 0.3);
+  border: 1px solid rgba(74, 144, 226, 0.5);
+  color: #87ceeb;
+  padding: 12px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1em;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.enroll-button:hover, .refresh-button:hover {
+  background: rgba(74, 144, 226, 0.5);
+  transform: translateY(-2px);
+}
+
+.enroll-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.enrollment-form {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 25px;
+  margin-bottom: 30px;
+}
+
+.enrollment-form h3 {
+  color: white;
+  margin: 0 0 20px 0;
+  text-align: center;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  color: white;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.form-group input[type="text"] {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  color: white;
+  font-size: 1em;
+  box-sizing: border-box;
+}
+
+.form-group input[type="text"]:focus {
+  outline: none;
+  border-color: rgba(74, 144, 226, 0.8);
+  box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
+.form-group input[type="file"] {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  color: white;
+  font-size: 1em;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.form-group small {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9em;
+  display: block;
+  margin-top: 5px;
+}
+
+.file-list {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.file-list strong {
+  color: white;
+  display: block;
+  margin-bottom: 10px;
+}
+
+.file-item {
+  color: rgba(255, 255, 255, 0.9);
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.file-item:last-child {
+  border-bottom: none;
+}
+
+.form-actions {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+  margin-top: 25px;
+}
+
+.form-actions button {
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-size: 1em;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.form-actions button[type="submit"] {
+  background: rgba(46, 204, 113, 0.3);
+  border: 1px solid rgba(46, 204, 113, 0.5);
+  color: #90ee90;
+}
+
+.form-actions button[type="submit"]:hover:not(:disabled) {
+  background: rgba(46, 204, 113, 0.5);
+  transform: translateY(-2px);
+}
+
+.form-actions button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-actions button[type="button"] {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+}
+
+.form-actions button[type="button"]:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.speakers-section h2 {
+  color: white;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.no-speakers {
+  text-align: center;
+  padding: 60px 20px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.no-speakers p {
+  margin: 10px 0;
+  font-size: 1.1em;
+}
+
+.speakers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.speaker-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  transition: all 0.3s ease;
+}
+
+.speaker-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.speaker-info {
+  flex: 1;
+}
+
+.speaker-name {
+  color: white;
+  font-size: 1.3em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.speaker-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin-bottom: 5px;
+}
+
+.speaker-meta span {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.speaker-email {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9em;
+  margin-top: 5px;
+}
+
+.speaker-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.status-badge {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.status-badge.active {
+  background: rgba(46, 204, 113, 0.3);
+  color: #90ee90;
+}
+
+.status-badge.inactive {
+  background: rgba(149, 165, 166, 0.3);
+  color: #bdc3c7;
+}
+
+.delete-button {
+  background: rgba(231, 76, 60, 0.3);
+  border: 1px solid rgba(231, 76, 60, 0.5);
+  color: #ff6b6b;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.3s ease;
+}
+
+.delete-button:hover {
+  background: rgba(231, 76, 60, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .speaker-item {
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .speaker-actions {
+    flex-direction: row;
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .speaker-meta {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .speaker-actions, .form-actions {
+    flex-direction: column;
+  }
+  
+  .enrollment-form {
+    padding: 20px 15px;
+  }
+}

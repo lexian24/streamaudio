@@ -66,11 +66,19 @@ class WhisperTranscriber:
             if len(audio_data) < 0.1 * sample_rate:  # Less than 0.1 seconds
                 return ""
             
-            # Transcribe using Whisper pipeline
-            result = self.transcriber({
-                "sampling_rate": sample_rate, 
-                "raw": audio_data
-            })
+            # Transcribe using Whisper pipeline with timestamps for long audio
+            audio_duration = len(audio_data) / sample_rate
+            
+            if audio_duration > 30:  # Use timestamps for long audio (>30 seconds)
+                result = self.transcriber({
+                    "sampling_rate": sample_rate, 
+                    "raw": audio_data
+                }, return_timestamps=True)
+            else:
+                result = self.transcriber({
+                    "sampling_rate": sample_rate, 
+                    "raw": audio_data
+                })
             
             text = result["text"].strip() if result and "text" in result else ""
             logger.debug(f"Transcribed {len(audio_data)/sample_rate:.1f}s audio: {text[:50]}...")
