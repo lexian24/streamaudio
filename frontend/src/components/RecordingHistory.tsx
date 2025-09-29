@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './RecordingHistory.css';
+import TranscriptViewer from './TranscriptViewer';
+import { AudioAnalysisResult } from '../types/audio';
 
 interface Recording {
   id: number;
@@ -52,6 +54,9 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedRecording, setExpandedRecording] = useState<number | null>(null);
+  const [selectedRecordings, setSelectedRecordings] = useState<Set<number>>(new Set());
+  const [deleting, setDeleting] = useState<Set<number>>(new Set());
+  const [modalRecording, setModalRecording] = useState<{recording: Recording, result: ProcessingResult} | null>(null);
 
   const API_BASE = 'http://localhost:8000';
 
@@ -81,15 +86,39 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
       if (!response.ok) {
         throw new Error('Failed to fetch recording details');
       }
-      const recording = await response.json();
+      const recordingDetails = await response.json();
+      console.log('Raw API response:', recordingDetails);
+      
+      // Debug processing results structure
+      if (recordingDetails.processing_results) {
+        recordingDetails.processing_results.forEach((result: any, idx: number) => {
+          console.log(`Processing Result ${idx}:`, {
+            status: result.status,
+            has_speaker_segments: !!result.speaker_segments,
+            speaker_segments_length: result.speaker_segments ? result.speaker_segments.length : 0,
+            speaker_segments_sample: result.speaker_segments ? result.speaker_segments.slice(0, 2) : null
+          });
+        });
+      }
+      
+      // The API returns {recording: {...}, processing_results: [...], speakers: [...]}
+      // We need to flatten this structure for the frontend
+      const flattenedRecording = {
+        ...recordingDetails.recording,
+        processing_results: recordingDetails.processing_results || [],
+        speakers: recordingDetails.speakers || []
+      };
+      
+      console.log('Flattened recording:', flattenedRecording);
+      console.log('Processing results:', flattenedRecording.processing_results);
       
       // Update the recording in our list with full details
       setRecordings(prev => 
-        prev.map(r => r.id === recordingId ? recording : r)
+        prev.map(r => r.id === recordingId ? flattenedRecording : r)
       );
       
       if (onRecordingSelect) {
-        onRecordingSelect(recording);
+        onRecordingSelect(flattenedRecording);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load recording details');
@@ -112,12 +141,143 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
     return new Date(dateString).toLocaleString();
   };
 
+  const convertToAnalysisResult = (recording: Recording, result: ProcessingResult): AudioAnalysisResult => {
+    // Convert speaker segments to the format expected by TranscriptViewer
+    const segments = result.speaker_segments.map(segment => ({
+      start_time: segment.start_time,
+      end_time: segment.end_time,
+      speaker_id: segment.speaker_name || segment.speaker_label,
+      text: segment.segment_text || '',
+      emotion: 'neutral', // We'll extract from emotions_json if available
+      emotion_confidence: segment.confidence || 0
+    }));
+
+    // Create speakers list from unique segment speakers
+    const speakerMap = new Map();
+    segments.forEach(segment => {
+      if (!speakerMap.has(segment.speaker_id)) {
+        speakerMap.set(segment.speaker_id, {
+          speaker_id: segment.speaker_id,
+          start_time: segment.start_time,
+          end_time: segment.end_time
+        });
+      } else {
+        const existing = speakerMap.get(segment.speaker_id);
+        existing.start_time = Math.min(existing.start_time, segment.start_time);
+        existing.end_time = Math.max(existing.end_time, segment.end_time);
+      }
+    });
+
+    return {
+      filename: recording.original_filename || recording.filename,
+      status: result.status,
+      processing_time: result.processing_duration || 0,
+      speakers: Array.from(speakerMap.values()),
+      segments: segments
+    };
+  };
+
   const toggleExpanded = async (recordingId: number) => {
     if (expandedRecording === recordingId) {
       setExpandedRecording(null);
     } else {
       setExpandedRecording(recordingId);
       await fetchRecordingDetails(recordingId);
+    }
+  };
+
+  const deleteRecording = async (recordingId: number) => {
+    if (!window.confirm('Are you sure you want to delete this recording?')) {
+      return;
+    }
+
+    setDeleting(prev => new Set(prev).add(recordingId));
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/recordings/${recordingId}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete recording');
+      }
+      
+      setRecordings(prev => prev.filter(r => r.id !== recordingId));
+      setSelectedRecordings(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(recordingId);
+        return newSet;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete recording');
+    } finally {
+      setDeleting(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(recordingId);
+        return newSet;
+      });
+    }
+  };
+
+  const bulkDeleteRecordings = async () => {
+    if (selectedRecordings.size === 0) return;
+    
+    if (!window.confirm(`Are you sure you want to delete ${selectedRecordings.size} recording(s)?`)) {
+      return;
+    }
+
+    const recordingIds = Array.from(selectedRecordings);
+    setDeleting(prev => new Set([...Array.from(prev), ...recordingIds]));
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/recordings/bulk-delete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(recordingIds),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete recordings');
+      }
+      
+      const result = await response.json();
+      
+      if (result.failed_ids && result.failed_ids.length > 0) {
+        setError(`Failed to delete ${result.failed_ids.length} recording(s). Successfully deleted ${result.deleted_count}.`);
+      }
+      
+      setRecordings(prev => prev.filter(r => !selectedRecordings.has(r.id)));
+      setSelectedRecordings(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete recordings');
+    } finally {
+      setDeleting(prev => {
+        const newSet = new Set(prev);
+        recordingIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+    }
+  };
+
+  const toggleRecordingSelection = (recordingId: number) => {
+    setSelectedRecordings(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(recordingId)) {
+        newSet.delete(recordingId);
+      } else {
+        newSet.add(recordingId);
+      }
+      return newSet;
+    });
+  };
+
+  const selectAllRecordings = () => {
+    if (selectedRecordings.size === recordings.length) {
+      setSelectedRecordings(new Set());
+    } else {
+      setSelectedRecordings(new Set(recordings.map(r => r.id)));
     }
   };
 
@@ -148,9 +308,32 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
     <div className="recording-history">
       <div className="history-header">
         <h3>Recording History</h3>
-        <button onClick={fetchRecordings} className="refresh-button">
-          🔄 Refresh
-        </button>
+        <div className="header-controls">
+          {recordings.length > 0 && (
+            <div className="bulk-controls">
+              <label className="select-all">
+                <input
+                  type="checkbox"
+                  checked={selectedRecordings.size === recordings.length && recordings.length > 0}
+                  onChange={selectAllRecordings}
+                />
+                Select All
+              </label>
+              {selectedRecordings.size > 0 && (
+                <button 
+                  onClick={bulkDeleteRecordings} 
+                  className="bulk-delete-button"
+                  disabled={deleting.size > 0}
+                >
+                  🗑️ Delete Selected ({selectedRecordings.size})
+                </button>
+              )}
+            </div>
+          )}
+          <button onClick={fetchRecordings} className="refresh-button">
+            🔄 Refresh
+          </button>
+        </div>
       </div>
       
       {recordings.length === 0 ? (
@@ -159,11 +342,33 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
         </div>
       ) : (
         <div className="recordings-list">
-          {recordings.map((recording) => (
+          {recordings.map((recording, index) => (
             <div 
-              key={recording.id} 
-              className={`recording-item ${expandedRecording === recording.id ? 'expanded' : ''}`}
+              key={recording.id || `recording-${index}`} 
+              className={`recording-item ${expandedRecording === recording.id ? 'expanded' : ''} ${selectedRecordings.has(recording.id) ? 'selected' : ''}`}
             >
+              <div className="recording-controls">
+                <input
+                  type="checkbox"
+                  checked={selectedRecordings.has(recording.id)}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    toggleRecordingSelection(recording.id);
+                  }}
+                  className="recording-checkbox"
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteRecording(recording.id);
+                  }}
+                  className="delete-button"
+                  disabled={deleting.has(recording.id)}
+                  title="Delete recording"
+                >
+                  {deleting.has(recording.id) ? '⏳' : '🗑️'}
+                </button>
+              </div>
               <div 
                 className="recording-summary"
                 onClick={() => toggleExpanded(recording.id)}
@@ -201,11 +406,12 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                     </div>
                   </div>
 
-                  {recording.processing_results && recording.processing_results.length > 0 && (
-                    <div className="processing-results">
-                      <h4>Processing Results ({recording.processing_results.length})</h4>
-                      {recording.processing_results.map((result) => (
-                        <div key={result.id} className="processing-result">
+                  <div className="processing-results">
+                    <h4>Processing Results ({recording.processing_results ? recording.processing_results.length : 0})</h4>
+                  {recording.processing_results && recording.processing_results.length > 0 ? (
+                    <div className="processing-results-content">
+                      {recording.processing_results.map((result, resultIndex) => (
+                        <div key={result.id || `result-${resultIndex}`} className="processing-result">
                           <div className="result-header">
                             <span className={`status-badge ${result.status}`}>
                               {result.status}
@@ -215,106 +421,30 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                             </span>
                           </div>
                           
-                          {result.status === 'completed' && (
-                            <>
-                              {result.transcription ? (
-                                <div className="transcription">
-                                  <strong>Transcription:</strong>
-                                  <p>{result.transcription}</p>
-                                  {result.confidence_score && (
-                                    <small>Confidence: {(result.confidence_score * 100).toFixed(1)}%</small>
-                                  )}
+                          {result.status === 'completed' && result.speaker_segments && result.speaker_segments.length > 0 && (
+                            <div className="result-actions">
+                              <div className="result-summary">
+                                <div className="summary-stats">
+                                  <span>📝 {result.transcription ? `${result.transcription.length} chars transcribed` : 'No transcription'}</span>
+                                  <span>🗣️ {result.speaker_segments.length} speaker segments</span>
+                                  <span>⏱️ {result.processing_duration ? `${result.processing_duration.toFixed(1)}s processing` : 'Processing time unknown'}</span>
                                 </div>
-                              ) : (
-                                <div className="no-transcription">
-                                  <strong>Transcription:</strong>
-                                  <p className="no-result">No transcription generated or audio was silent</p>
-                                </div>
-                              )}
+                                <button 
+                                  className="view-details-button"
+                                  onClick={() => setModalRecording({recording, result})}
+                                >
+                                  📊 View Full Analysis
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
-                              {result.num_speakers ? (
-                                <div className="diarization">
-                                  <strong>Speakers Detected:</strong> {result.num_speakers}
-                                </div>
-                              ) : (
-                                <div className="diarization">
-                                  <strong>Speaker Diarization:</strong> <span className="no-result">No speakers detected</span>
-                                </div>
-                              )}
-
-                              {result.dominant_emotion ? (
-                                <div className="emotion">
-                                  <strong>Dominant Emotion:</strong> {result.dominant_emotion}
-                                  {result.emotion_confidence && (
-                                    <span> ({(result.emotion_confidence * 100).toFixed(1)}%)</span>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="emotion">
-                                  <strong>Emotion Analysis:</strong> <span className="no-result">No emotions detected</span>
-                                </div>
-                              )}
-
-                              {result.speaker_segments && result.speaker_segments.length > 0 ? (
-                                <div className="speaker-segments">
-                                  <strong>Speaker Segments:</strong>
-                                  
-                                  {/* Show identified speakers summary */}
-                                  {result.speaker_segments.some(s => s.speaker_name) && (
-                                    <div className="identified-speakers-summary">
-                                      <strong>Identified Speakers:</strong> {
-                                        Array.from(new Set(
-                                          result.speaker_segments
-                                            .filter(s => s.speaker_name)
-                                            .map(s => s.speaker_name)
-                                        )).join(', ')
-                                      }
-                                    </div>
-                                  )}
-                                  
-                                  <div className="segments-list">
-                                    {result.speaker_segments.map((segment) => (
-                                      <div key={segment.id} className={`segment ${segment.speaker_name ? 'identified' : 'unidentified'}`}>
-                                        <span className="speaker">
-                                          {segment.speaker_name ? (
-                                            <>
-                                              <span className="speaker-name">{segment.speaker_name}</span>
-                                              <span className="confidence-indicator">✓</span>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <span className="speaker-label">{segment.speaker_label}</span>
-                                              <span className="unidentified-indicator">?</span>
-                                            </>
-                                          )}
-                                        </span>
-                                        <span className="time">
-                                          {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
-                                        </span>
-                                        {segment.segment_text && (
-                                          <span className="text">"{segment.segment_text}"</span>
-                                        )}
-                                        {segment.confidence && (
-                                          <span className="segment-confidence">
-                                            {(segment.confidence * 100).toFixed(0)}%
-                                          </span>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="speaker-segments">
-                                  <strong>Speaker Segments:</strong> <span className="no-result">No speaker segments available</span>
-                                </div>
-                              )}
-
-                              {result.processing_duration && (
-                                <div className="processing-time">
-                                  <strong>Processing Time:</strong> {result.processing_duration.toFixed(2)}s
-                                </div>
-                              )}
-                            </>
+                          {result.status === 'completed' && (!result.speaker_segments || result.speaker_segments.length === 0) && (
+                            <div className="no-processing-results">
+                              <p className="no-result">
+                                📊 This recording was processed but no speaker segments with text were found.
+                              </p>
+                            </div>
                           )}
 
                           {result.status === 'pending' && (
@@ -331,11 +461,49 @@ const RecordingHistory: React.FC<RecordingHistoryProps> = ({ onRecordingSelect }
                         </div>
                       ))}
                     </div>
+                  ) : (
+                    <div className="no-processing-results">
+                      <p className="no-result">
+                        📊 This recording hasn't been processed yet. 
+                        {recording.file_path && recording.file_path.includes('upload_') ? 
+                          ' Upload it through the main page to trigger analysis.' : 
+                          ' Processing may still be in progress or failed.'
+                        }
+                      </p>
+                      <button 
+                        className="process-button"
+                        onClick={() => console.log('TODO: Implement reprocessing for recording', recording.id)}
+                      >
+                        🔄 Process This Recording
+                      </button>
+                    </div>
                   )}
+                  </div>
                 </div>
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Analysis Details Modal */}
+      {modalRecording && (
+        <div className="analysis-modal-overlay" onClick={() => setModalRecording(null)}>
+          <div className="analysis-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>📊 Full Analysis Details</h2>
+              <div className="modal-recording-info">
+                <h3>{modalRecording.recording.original_filename || modalRecording.recording.filename}</h3>
+                <p>Processed: {formatDateTime(modalRecording.result.processed_at)}</p>
+              </div>
+              <button className="modal-close" onClick={() => setModalRecording(null)}>
+                ✕
+              </button>
+            </div>
+            <div className="modal-content">
+              <TranscriptViewer result={convertToAnalysisResult(modalRecording.recording, modalRecording.result)} />
+            </div>
+          </div>
         </div>
       )}
     </div>

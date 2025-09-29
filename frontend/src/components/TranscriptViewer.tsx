@@ -45,7 +45,7 @@ const TranscriptViewer: React.FC<TranscriptViewerProps> = ({ result }) => {
             <div className="summary-label">Speakers Detected</div>
           </div>
           <div className="summary-item">
-            <div className="summary-value">{result.segments.length}</div>
+            <div className="summary-value">{result.segments.filter(s => s.text && s.text.trim().length > 0).length}</div>
             <div className="summary-label">Speech Segments</div>
           </div>
           <div className="summary-item">
@@ -81,7 +81,9 @@ const TranscriptViewer: React.FC<TranscriptViewerProps> = ({ result }) => {
       <div className="transcript-section">
         <h3>Full Transcript</h3>
         <div className="transcript-content">
-          {result.segments.map((segment, index) => (
+          {result.segments
+            .filter(segment => segment.text && segment.text.trim().length > 0)
+            .map((segment, index) => (
             <div key={index} className="transcript-segment">
               <div className="segment-header">
                 <div className="segment-info">
@@ -126,7 +128,9 @@ const TranscriptViewer: React.FC<TranscriptViewerProps> = ({ result }) => {
         <h3>Timeline</h3>
         <div className="timeline-container">
           <div className="timeline">
-            {result.segments.map((segment, index) => {
+            {result.segments
+              .filter(segment => segment.text && segment.text.trim().length > 0)
+              .map((segment, index) => {
               const duration = result.speakers.reduce((max, speaker) => 
                 Math.max(max, speaker.end_time), 0);
               const left = (segment.start_time / duration) * 100;
