@@ -3,7 +3,6 @@ import { useMicrophone } from '../hooks/useMicrophone';
 import { useVadWebSocket } from '../hooks/useVadWebSocket';
 import { useContinuousRecorder } from '../hooks/useContinuousRecorder';
 import TranscriptViewer from './TranscriptViewer';
-import RecordingHistory from './RecordingHistory';
 import '../styles/StreamingInterface.css';
 import { AudioAnalysisResult } from '../types/audio';
 
@@ -12,17 +11,8 @@ interface StreamingInterfaceProps {
 }
 
 
-interface Recording {
-  filename: string;
-  path: string;
-  timestamp: string;
-  duration: number;
-  size: number;
-}
 
 const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
-  const [recordings, setRecordings] = useState<Recording[]>([]);
-  const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [processedResult, setProcessedResult] = useState<AudioAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -36,24 +26,54 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
   
   // Recording state management
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'stopping'>('idle');
+  const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [isProcessingRecording, setIsProcessingRecording] = useState(false);
 
-  // Fetch recordings list
-  const fetchRecordings = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_BASE}/vad/recordings`);
-      if (response.ok) {
-        const data = await response.json();
-        setRecordings(data.recordings);
+
+  // Poll for task completion
+  const pollTaskStatus = useCallback(async (taskId: string) => {
+    const maxAttempts = 120; // 2 minutes max
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      try {
+        const response = await fetch(`${API_BASE}/api/tasks/${taskId}`);
+        const taskStatus = await response.json();
+
+        if (taskStatus.status === 'completed') {
+          if (taskStatus.result && taskStatus.result.speakers) {
+            setProcessedResult(taskStatus.result);
+            setLoading(false);
+            console.log('✅ Recording analysis complete');
+          } else {
+            throw new Error('Task completed but no result data');
+          }
+          return;
+        } else if (taskStatus.status === 'failed') {
+          throw new Error(taskStatus.error || 'Processing failed');
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to check task status';
+        setError(errorMessage);
+        setLoading(false);
+        console.error('❌ Error polling task:', err);
+        return;
       }
-    } catch (error) {
-      console.error('Failed to fetch recordings:', error);
     }
-  }, []);
 
-  // Upload recording to backend
+    setError('Processing timed out after 2 minutes');
+    setLoading(false);
+  }, [API_BASE]);
+
+  // Upload recording to backend and poll for results
   const uploadRecording = useCallback(async (blob: Blob) => {
     try {
+      setIsProcessingRecording(true);
+      setError(null);
+
       const formData = new FormData();
       const filename = `recording_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
       formData.append('file', blob, filename);
@@ -64,16 +84,30 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
       });
 
       if (response.ok) {
-        console.log('✅ Recording uploaded successfully');
-        // Refresh recordings list
-        fetchRecordings();
+        const uploadResponse = await response.json();
+        console.log('✅ Recording uploaded, task ID:', uploadResponse.task_id);
+
+        // Poll for results
+        if (uploadResponse.task_id) {
+          await pollTaskStatus(uploadResponse.task_id);
+        } else {
+          throw new Error('No task ID returned from upload');
+        }
+
       } else {
-        console.error('❌ Failed to upload recording');
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to upload recording');
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Error uploading recording';
+      setError(errorMessage);
+      setIsProcessingRecording(false);
       console.error('❌ Error uploading recording:', error);
+    } finally {
+      setIsProcessingRecording(false);
     }
-  }, [fetchRecordings]);
+  }, [API_BASE, pollTaskStatus]);
+
 
   // Helper functions
   const isMonitoring = useCallback(() => {
@@ -92,7 +126,7 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
     const vadStatus = vadWebSocket.vadStatus;
     if (!vadStatus) return;
 
-    if (vadStatus.is_speech && vadStatus.confidence > 0.4) {
+    if (vadStatus.is_speech && vadStatus.confidence > 0.1) {
       // High-confidence speech detected
       console.log(`🟢 Speech detected (conf: ${vadStatus.confidence.toFixed(3)})`);
       
@@ -116,16 +150,17 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
         if (!silenceTimerRef.current) {
           console.log(`🔇 Starting 5-second silence timer (conf: ${vadStatus.confidence.toFixed(3)})`);
           silenceTimerRef.current = setTimeout(async () => {
-            // 5 seconds of silence - stop recording
-            console.log('🔇 5 seconds of silence reached - stopping recording');
-            setRecordingState('stopping');
-            
+            // 5 seconds of silence - stop recording and upload
+            console.log('🔇 5 seconds of silence reached - saving recording');
+            setRecordingState('processing');
+
             const recordingBlob = await continuousRecorder.stopRecording();
             if (recordingBlob) {
               console.log('📁 Uploading recording blob:', recordingBlob.size, 'bytes');
               await uploadRecording(recordingBlob);
+              // Results will be shown immediately via setProcessedResult in uploadRecording
             }
-            
+
             setRecordingState('idle');
             silenceTimerRef.current = null;
           }, 5000); // 5 seconds
@@ -138,6 +173,7 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
   useEffect(() => {
     microphone.onAudioData(vadWebSocket.sendAudioChunk);
   }, [microphone, vadWebSocket.sendAudioChunk]);
+
 
   // Update VAD status from WebSocket (we use the WebSocket status directly)
   // No need to store it separately since we get it from vadWebSocket.vadStatus
@@ -152,10 +188,8 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
     if (monitoring) {
       // Only poll when actively monitoring
       interval = setInterval(() => {
-        fetchRecordings();
-      }, 2000);
+        }, 2000);
       // Initial fetch when starting
-      fetchRecordings();
     }
 
     return () => {
@@ -221,6 +255,7 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
         const recordingBlob = await continuousRecorder.stopRecording();
         if (recordingBlob) {
           await uploadRecording(recordingBlob);
+          // Results will be shown immediately via setProcessedResult in uploadRecording
         }
       }
       
@@ -249,7 +284,6 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
       }
       
       // Refresh recordings list once after stopping
-      setTimeout(() => fetchRecordings(), 500);
       
       setError(null);
     } catch (error) {
@@ -261,56 +295,6 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
     }
   };
 
-  const processRecording = async (filename: string) => {
-    setProcessingFile(filename);
-    setProcessedResult(null);
-    setError(null);
-
-    try {
-      const response = await fetch(`${API_BASE}/vad/process-recording/${filename}`, {
-        method: 'POST',
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setProcessedResult(result);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to process recording');
-      }
-    } catch (error) {
-      setError('Network error processing recording');
-    } finally {
-      setProcessingFile(null);
-    }
-  };
-
-  const deleteRecording = async (filename: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/vad/recordings/${filename}`, {
-        method: 'DELETE',
-      });
-      if (response.ok) {
-        fetchRecordings();
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to delete recording');
-      }
-    } catch (error) {
-      setError('Network error deleting recording');
-    }
-  };
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const formatFileSize = (bytes: number) => {
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(1)} MB`;
-  };
 
   return (
     <div className="streaming-interface">
@@ -329,7 +313,12 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
         </div>
         {continuousRecorder.isRecording && (
           <div className="recording-timer">
-            ⏱️ Recording: {formatDuration(continuousRecorder.recordingDuration)}
+            ⏱️ Recording: {Math.floor(continuousRecorder.recordingDuration / 60)}:{Math.floor(continuousRecorder.recordingDuration % 60).toString().padStart(2, '0')}
+          </div>
+        )}
+        {isProcessingRecording && (
+          <div className="processing-indicator">
+            ⚙️ Processing recording...
           </div>
         )}
       </div>
@@ -355,12 +344,12 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
               {loading ? 'Starting...' : 'Start Monitoring'}
             </button>
           ) : (
-            <button 
+            <button
               className="stop-button"
               onClick={stopVadMonitoring}
-              disabled={loading}
+              disabled={loading && !isProcessingRecording}
             >
-              {loading ? '⏳ Stopping...' : '⏹️ Stop Monitoring'}
+              {loading && !isProcessingRecording ? '⏳ Stopping...' : '⏹️ Stop Monitoring'}
             </button>
           )}
           
@@ -369,10 +358,10 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
               🔴 Recording...
             </div>
           )}
-          
-          {recordingState === 'stopping' && (
+
+          {recordingState === 'processing' && (
             <div className="recording-status">
-              ⏹️ Finishing recording...
+              ⚙️ Saving recording...
             </div>
           )}
         </div>
@@ -380,68 +369,15 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
         {/* Simple VAD Indicator - Only Green/Red Circle */}
         {isMonitoring() && (
           <div className="vad-indicator">
-            <div className={`vad-light ${vadWebSocket.vadStatus?.is_speech && vadWebSocket.vadStatus?.confidence > 0.4 ? 'speech' : 'silence'}`}>
-              {vadWebSocket.vadStatus?.is_speech && vadWebSocket.vadStatus?.confidence > 0.4 ? '🟢' : '🔴'}
+            <div className={`vad-light ${vadWebSocket.vadStatus?.is_speech && vadWebSocket.vadStatus?.confidence > 0.1 ? 'speech' : 'silence'}`}>
+              {vadWebSocket.vadStatus?.is_speech && vadWebSocket.vadStatus?.confidence > 0.1 ? '🟢' : '🔴'}
             </div>
           </div>
         )}
       </div>
 
 
-      {/* Recordings List */}
-      <div className="recordings-section">
-        <h2>📁 Recordings ({recordings.length})</h2>
-        
-        {recordings.length === 0 ? (
-          <div className="no-recordings">
-            <p>No recordings yet.</p>
-            <p>Start monitoring to automatically record when speech is detected.</p>
-          </div>
-        ) : (
-          <div className="recordings-list">
-            {recordings.map((recording) => (
-              <div key={recording.filename} className="recording-item">
-                <div className="recording-info">
-                  <div className="recording-name">{recording.filename}</div>
-                  <div className="recording-meta">
-                    <span>📅 {new Date(recording.timestamp).toLocaleString()}</span>
-                    <span>⏱️ {formatDuration(recording.duration)}</span>
-                    <span>💾 {formatFileSize(recording.size)}</span>
-                  </div>
-                </div>
-                <div className="recording-actions">
-                  <button 
-                    className="analyze-button"
-                    onClick={() => processRecording(recording.filename)}
-                    disabled={processingFile !== null}
-                    title="Analyze with transcription, speaker diarization, and emotion recognition"
-                  >
-                    {processingFile === recording.filename ? '🔄 Analyzing...' : '🔍 Analyze Recording'}
-                  </button>
-                  <button 
-                    className="delete-button"
-                    onClick={() => deleteRecording(recording.filename)}
-                    title="Delete this recording permanently"
-                  >
-                    🗑️ Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      {/* Processing Status */}
-      {processingFile && (
-        <div className="processing-section">
-          <div className="processing-container">
-            <div className="spinner"></div>
-            <h3>⚡ Processing {processingFile}</h3>
-            <p>Running speaker diarization, transcription, and emotion analysis...</p>
-          </div>
-        </div>
-      )}
 
       {/* Analysis Results */}
       {processedResult && (
@@ -456,13 +392,7 @@ const StreamingInterface: React.FC<StreamingInterfaceProps> = ({ onBack }) => {
         </div>
       )}
 
-      {/* Recording History Section */}
-      <RecordingHistory 
-        onRecordingSelect={(recording) => {
-          console.log('Selected recording:', recording);
-          // You can add logic here to display selected recording details
-        }}
-      />
+      {/* No Latest Recording section - VAD recordings show results immediately like upload */}
 
     </div>
   );

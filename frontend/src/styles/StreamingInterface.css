@@ -431,3 +431,109 @@
   border-radius: 8px;
   margin-top: 8px;
 }
+
+/* Latest Recording Section */
+.latest-recording-section {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.section-header h2 {
+  color: #1f2937;
+  margin: 0;
+  font-size: 1.3em;
+}
+
+.recording-preview {
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.recording-info h3 {
+  color: #1f2937;
+  margin: 0 0 8px 0;
+  font-size: 1.1em;
+}
+
+.recording-info p {
+  color: #6b7280;
+  margin: 4px 0;
+  font-size: 0.9em;
+}
+
+.speakers-summary {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.speakers-summary h4 {
+  color: #1f2937;
+  margin: 0 0 8px 0;
+  font-size: 1em;
+}
+
+.speakers-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.speaker-item {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 6px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.speaker-name {
+  color: #047857;
+  font-weight: 500;
+  font-size: 0.9em;
+}
+
+.speaker-confidence {
+  color: #047857;
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.view-details {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.view-details p {
+  margin: 0;
+  font-size: 0.9em;
+  color: #6b7280;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  text-decoration: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}

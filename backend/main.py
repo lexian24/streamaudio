@@ -71,12 +71,24 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="FastAudio API",
-    description="Audio Analysis with Whisper + pyannote - Organized with Routes",
+    description="Professional Audio Analysis API with Speaker Identification",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json"
 )
 
-# Add CORS middleware
+# Add middleware (order matters - first added is outermost)
+from middleware import error_handler_middleware, logging_middleware
+
+# 1. Error handling (outermost - catches all errors)
+error_handler_middleware(app)
+
+# 2. Logging (logs all requests/responses)
+logging_middleware(app)
+
+# 3. CORS (must be after error handling)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -90,7 +102,7 @@ app.include_router(api_router)
 
 if __name__ == "__main__":
     uvicorn.run(
-        "main_refactored:app",
+        "main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,

@@ -4,9 +4,10 @@ import AudioUploader from './components/AudioUploader';
 import TranscriptViewer from './components/TranscriptViewer';
 import StreamingInterface from './components/StreamingInterface';
 import SpeakerManagement from './components/SpeakerManagement';
+import RecordingHistory from './components/RecordingHistory';
 import { AudioAnalysisResult } from './types/audio';
 
-type ViewMode = 'upload' | 'streaming' | 'speakers';
+type ViewMode = 'upload' | 'streaming' | 'speakers' | 'history';
 
 function App() {
   const [analysisResult, setAnalysisResult] = useState<AudioAnalysisResult | null>(null);
@@ -52,6 +53,11 @@ function App() {
     handleReset();
   };
 
+  const switchToHistory = () => {
+    setViewMode('history');
+    handleReset();
+  };
+
   if (viewMode === 'streaming') {
     return <StreamingInterface onBack={switchToUpload} />;
   }
@@ -60,11 +66,30 @@ function App() {
     return <SpeakerManagement onBack={switchToUpload} />;
   }
 
+  if (viewMode === 'history') {
+    return (
+      <div className="App">
+        <header className="app-header">
+          <button className="back-button" onClick={switchToUpload}>
+            ← Back to Home
+          </button>
+          <h1>📁 Recording History</h1>
+          <p>View and manage all your recordings</p>
+        </header>
+        <main className="app-main">
+          <RecordingHistory onRecordingSelect={(recording) => {
+            console.log('Selected recording:', recording);
+          }} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="App">
       <header className="app-header">
         <h1>⚡ FastAudio Analysis</h1>
-        <p>Simple and fast audio processing with transcription, speaker identification, and emotion recognition</p>
+        <p>Advanced audio processing platform</p>
         <div className="mode-switcher">
           <button 
             className="mode-button active"
@@ -84,6 +109,12 @@ function App() {
           >
             👥 Speaker Management
           </button>
+          <button 
+            className="mode-button"
+            onClick={switchToHistory}
+          >
+            📁 History
+          </button>
         </div>
       </header>
       
@@ -97,33 +128,14 @@ function App() {
         )}
 
         {!analysisResult && !isProcessing && (
-          <>
-            <div className="feature-highlights">
-              <div className="feature-card">
-                <span className="feature-icon">⚡</span>
-                <h3>Fast Processing</h3>
-                <p>Lightweight pipeline using for quick audio analysis</p>
-              </div>
-              <div className="feature-card">
-                <span className="feature-icon">🎭</span>
-                <h3>Emotion Detection</h3>
-                <p>Audio based emotion recognition</p>
-              </div>
-              <div className="feature-card">
-                <span className="feature-icon">🗣️</span>
-                <h3>Speaker Diarization</h3>
-                <p>Accurate speaker separation and identification</p>
-              </div>
-            </div>
-            <div className="upload-section">
-              <AudioUploader 
-                onAnalysisStart={handleAnalysisStart}
-                onAnalysisComplete={handleAnalysisComplete}
-                onError={handleError}
-                isProcessing={isProcessing}
-              />
-            </div>
-          </>
+          <div className="upload-section">
+            <AudioUploader 
+              onAnalysisStart={handleAnalysisStart}
+              onAnalysisComplete={handleAnalysisComplete}
+              onError={handleError}
+              isProcessing={isProcessing}
+            />
+          </div>
         )}
 
         {isProcessing && (

@@ -120,11 +120,12 @@ export const useVadWebSocket = (url: string): UseVadWebSocketReturn => {
 
   const startStreaming = useCallback(() => {
     if (!isConnected) {
+      console.log('❌ Cannot start streaming: not connected to WebSocket');
       setError('Not connected to WebSocket');
       return;
     }
     setIsStreaming(true);
-    console.log('Started VAD streaming');
+    console.log('✅ Started VAD streaming - ready to send audio chunks');
   }, [isConnected]);
 
   const stopStreaming = useCallback(() => {
@@ -135,8 +136,15 @@ export const useVadWebSocket = (url: string): UseVadWebSocketReturn => {
 
   const sendAudioChunk = useCallback((audioData: Float32Array, timestamp: number) => {
     if (!websocketRef.current || websocketRef.current.readyState !== WebSocket.OPEN || !isStreaming) {
+      console.log('❌ Cannot send audio chunk:', {
+        websocket: !!websocketRef.current,
+        readyState: websocketRef.current?.readyState,
+        isStreaming
+      });
       return;
     }
+
+    console.log('📡 Sending audio chunk:', audioData.length, 'samples');
 
     try {
       // Convert Float32Array to base64 for transmission (TypeScript compatible)

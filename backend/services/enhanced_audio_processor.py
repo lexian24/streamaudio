@@ -43,7 +43,7 @@ class EnhancedAudioProcessor(AudioProcessor):
         recording_id: int,
         db_service: DatabaseService,
         auto_enroll_new_speakers: bool = True,
-        confidence_threshold: float = 0.50
+        confidence_threshold: float = 0.45
     ) -> Dict[str, Any]:
         """
         Process audio with persistent speaker management.
@@ -113,11 +113,24 @@ class EnhancedAudioProcessor(AudioProcessor):
                     continue
             
             # Step 4: Apply persistent speaker assignments to segments
-            enhanced_segments = await self._apply_persistent_assignments(
-                base_result['segments'],
-                persistent_assignments,
-                enrollment_results
-            )
+            # Detect sync vs async context
+            from sqlalchemy.orm import Session
+            is_sync_context = isinstance(self.db.db, Session)
+
+            if is_sync_context:
+                # Use sync version (Celery context)
+                enhanced_segments = self._apply_persistent_assignments_sync(
+                    base_result['segments'],
+                    persistent_assignments,
+                    enrollment_results
+                )
+            else:
+                # Use async version (FastAPI context)
+                enhanced_segments = await self._apply_persistent_assignments(
+                    base_result['segments'],
+                    persistent_assignments,
+                    enrollment_results
+                )
             
             # Step 5: Generate enhanced result
             enhanced_result = {
@@ -156,27 +169,50 @@ class EnhancedAudioProcessor(AudioProcessor):
         Returns assignment result with method and details.
         """
         logger.info(f"Processing session speaker {session_speaker} with {len(segments)} segments")
-        
+
+        # Detect if we're in sync or async context
+        from sqlalchemy.orm import Session
+        is_sync_context = isinstance(self.db.db, Session)
+
         # Step 1: Try to match against existing persistent speakers
-        match_result = await self.persistent_speaker_manager.find_matching_persistent_speaker(
-            segments, audio_path, confidence_threshold
-        )
+        if is_sync_context:
+            # Use sync version (Celery context)
+            match_result = self.persistent_speaker_manager.find_matching_persistent_speaker_sync(
+                segments, audio_path, confidence_threshold
+            )
+        else:
+            # Use async version (FastAPI context)
+            match_result = await self.persistent_speaker_manager.find_matching_persistent_speaker(
+                segments, audio_path, confidence_threshold
+            )
         
         if match_result:
             # High confidence match found
             logger.info(f"Matched {session_speaker} to {match_result['persistent_speaker_id']} "
                        f"(confidence: {match_result['confidence']:.3f})")
-            
+
             # Create mapping
-            await self.persistent_speaker_manager.create_speaker_mapping(
-                recording_id,
-                session_speaker,
-                match_result['persistent_speaker_id'],
-                match_result['confidence'],
-                match_result['similarity_score'],
-                match_result['method']
-            )
-            
+            if is_sync_context:
+                # Use sync version (Celery context)
+                self.persistent_speaker_manager.create_speaker_mapping_sync(
+                    recording_id,
+                    session_speaker,
+                    match_result['persistent_speaker_id'],
+                    match_result['confidence'],
+                    match_result['similarity_score'],
+                    match_result['method']
+                )
+            else:
+                # Use async version (FastAPI context)
+                await self.persistent_speaker_manager.create_speaker_mapping(
+                    recording_id,
+                    session_speaker,
+                    match_result['persistent_speaker_id'],
+                    match_result['confidence'],
+                    match_result['similarity_score'],
+                    match_result['method']
+                )
+
             return {
                 'method': 'matched_existing',
                 'session_speaker': session_speaker,
@@ -186,25 +222,27 @@ class EnhancedAudioProcessor(AudioProcessor):
             }
         
         # Step 2: No good match found - check for medium confidence matches
-        medium_confidence_matches = await self._find_medium_confidence_matches(
-            segments, audio_path, confidence_threshold * 0.8  # 80% of threshold
-        )
-        
-        if medium_confidence_matches and not auto_enroll:
-            # Queue for manual review
-            await self._add_to_review_queue(
-                recording_id, session_speaker, segments, medium_confidence_matches
+        if not is_sync_context:
+            # Only do medium confidence matching in async context (FastAPI)
+            medium_confidence_matches = await self._find_medium_confidence_matches(
+                segments, audio_path, confidence_threshold * 0.8  # 80% of threshold
             )
-            
-            return {
-                'method': 'needs_review',
-                'session_speaker': session_speaker,
-                'suggested_matches': medium_confidence_matches,
-                'reason': 'medium_confidence_matches'
-            }
-        
-        # Step 3: No match or auto-enrollment enabled - enroll as new speaker
-        if auto_enroll:
+
+            if medium_confidence_matches and not auto_enroll:
+                # Queue for manual review
+                await self._add_to_review_queue(
+                    recording_id, session_speaker, segments, medium_confidence_matches
+                )
+
+                return {
+                    'method': 'needs_review',
+                    'session_speaker': session_speaker,
+                    'suggested_matches': medium_confidence_matches,
+                    'reason': 'medium_confidence_matches'
+                }
+
+        # Step 3: No match or auto-enrollment enabled - skip enrollment in sync mode
+        if auto_enroll and not is_sync_context:
             enrollment_result = await self.persistent_speaker_manager.enroll_speaker_from_segments(
                 session_speaker,
                 segments,
@@ -215,15 +253,27 @@ class EnhancedAudioProcessor(AudioProcessor):
             
             if enrollment_result['success']:
                 # Create mapping for new speaker
-                await self.persistent_speaker_manager.create_speaker_mapping(
-                    recording_id,
-                    session_speaker,
-                    enrollment_result['persistent_speaker_id'],
-                    1.0,  # High confidence for new enrollment
-                    1.0,  # Perfect similarity for self-enrollment
-                    'auto_enrolled'
-                )
-                
+                if is_sync_context:
+                    # Use sync version (Celery context)
+                    self.persistent_speaker_manager.create_speaker_mapping_sync(
+                        recording_id,
+                        session_speaker,
+                        enrollment_result['persistent_speaker_id'],
+                        1.0,  # High confidence for new enrollment
+                        1.0,  # Perfect similarity for self-enrollment
+                        'auto_enrolled'
+                    )
+                else:
+                    # Use async version (FastAPI context)
+                    await self.persistent_speaker_manager.create_speaker_mapping(
+                        recording_id,
+                        session_speaker,
+                        enrollment_result['persistent_speaker_id'],
+                        1.0,  # High confidence for new enrollment
+                        1.0,  # Perfect similarity for self-enrollment
+                        'auto_enrolled'
+                    )
+
                 logger.info(f"Auto-enrolled {session_speaker} as {enrollment_result['persistent_speaker_id']}")
                 
                 return {
@@ -236,15 +286,16 @@ class EnhancedAudioProcessor(AudioProcessor):
             else:
                 logger.warning(f"Failed to enroll {session_speaker}: {enrollment_result['message']}")
         
-        # Step 4: Fallback - queue for manual review
-        await self._add_to_review_queue(
-            recording_id, session_speaker, segments, medium_confidence_matches or []
-        )
-        
+        # Step 4: Fallback - queue for manual review (skip in sync mode)
+        if not is_sync_context:
+            await self._add_to_review_queue(
+                recording_id, session_speaker, segments, []
+            )
+
         return {
             'method': 'needs_review',
             'session_speaker': session_speaker,
-            'suggested_matches': medium_confidence_matches or [],
+            'suggested_matches': [],
             'reason': 'enrollment_failed' if auto_enroll else 'auto_enroll_disabled'
         }
     
@@ -335,6 +386,70 @@ class EnhancedAudioProcessor(AudioProcessor):
         except Exception as e:
             logger.error(f"Failed to add to review queue: {e}")
     
+    def _apply_persistent_assignments_sync(
+        self,
+        segments: List[Dict[str, Any]],
+        persistent_assignments: Dict[str, Any],
+        enrollment_results: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Apply persistent speaker assignments to segments (sync version for Celery)."""
+        from database.models import PersistentSpeaker
+        from sqlalchemy.orm import Session
+
+        enhanced_segments = []
+
+        for segment in segments:
+            enhanced_segment = segment.copy()
+            session_speaker = segment['speaker_id']
+
+            # Check for persistent assignment
+            if session_speaker in persistent_assignments:
+                assignment = persistent_assignments[session_speaker]
+                enhanced_segment['persistent_speaker_id'] = assignment['persistent_speaker_id']
+                enhanced_segment['assignment_confidence'] = assignment['confidence']
+                enhanced_segment['assignment_method'] = 'matched_existing'
+
+                # Get speaker name (sync)
+                if isinstance(self.db.db, Session):
+                    speaker = self.db.db.query(PersistentSpeaker).filter(
+                        PersistentSpeaker.id == assignment['persistent_speaker_id']
+                    ).first()
+                    speaker_name = speaker.name if speaker and speaker.name else assignment['persistent_speaker_id']
+                else:
+                    speaker_name = assignment['persistent_speaker_id']
+
+                enhanced_segment['persistent_speaker_name'] = speaker_name
+                enhanced_segment['speaker_id'] = speaker_name  # Update speaker_id to show actual name
+
+            elif session_speaker in enrollment_results:
+                enrollment = enrollment_results[session_speaker]
+                enhanced_segment['persistent_speaker_id'] = enrollment['persistent_speaker_id']
+                enhanced_segment['assignment_confidence'] = 1.0
+                enhanced_segment['assignment_method'] = 'enrolled_new'
+
+                # Get enrolled speaker name (sync)
+                if isinstance(self.db.db, Session):
+                    speaker = self.db.db.query(PersistentSpeaker).filter(
+                        PersistentSpeaker.id == enrollment['persistent_speaker_id']
+                    ).first()
+                    speaker_name = speaker.name if speaker and speaker.name else enrollment['persistent_speaker_id']
+                else:
+                    speaker_name = enrollment['persistent_speaker_id']
+
+                enhanced_segment['persistent_speaker_name'] = speaker_name
+                enhanced_segment['speaker_id'] = speaker_name  # Update speaker_id to show actual name
+
+            else:
+                # No assignment - mark as unassigned
+                enhanced_segment['persistent_speaker_id'] = None
+                enhanced_segment['assignment_confidence'] = 0.0
+                enhanced_segment['assignment_method'] = 'unassigned'
+                enhanced_segment['persistent_speaker_name'] = None
+
+            enhanced_segments.append(enhanced_segment)
+
+        return enhanced_segments
+
     async def _apply_persistent_assignments(
         self,
         segments: List[Dict[str, Any]],
@@ -343,18 +458,18 @@ class EnhancedAudioProcessor(AudioProcessor):
     ) -> List[Dict[str, Any]]:
         """Apply persistent speaker assignments to segments."""
         enhanced_segments = []
-        
+
         for segment in segments:
             enhanced_segment = segment.copy()
             session_speaker = segment['speaker_id']
-            
+
             # Check for persistent assignment
             if session_speaker in persistent_assignments:
                 assignment = persistent_assignments[session_speaker]
                 enhanced_segment['persistent_speaker_id'] = assignment['persistent_speaker_id']
                 enhanced_segment['assignment_confidence'] = assignment['confidence']
                 enhanced_segment['assignment_method'] = 'matched_existing'
-                
+
                 # Get speaker name and update speaker_id to show actual name
                 speaker = await self.db.persistent_speakers.get_persistent_speaker(
                     assignment['persistent_speaker_id']
@@ -365,13 +480,13 @@ class EnhancedAudioProcessor(AudioProcessor):
                     speaker_name = assignment['persistent_speaker_id']  # Fallback
                 enhanced_segment['persistent_speaker_name'] = speaker_name
                 enhanced_segment['speaker_id'] = speaker_name  # Update speaker_id to show actual name
-                
+
             elif session_speaker in enrollment_results:
                 enrollment = enrollment_results[session_speaker]
                 enhanced_segment['persistent_speaker_id'] = enrollment['persistent_speaker_id']
                 enhanced_segment['assignment_confidence'] = 1.0
                 enhanced_segment['assignment_method'] = 'enrolled_new'
-                
+
                 # Get enrolled speaker name and update speaker_id
                 speaker = await self.db.persistent_speakers.get_persistent_speaker(
                     enrollment['persistent_speaker_id']
@@ -382,16 +497,16 @@ class EnhancedAudioProcessor(AudioProcessor):
                     speaker_name = enrollment['persistent_speaker_id']  # Fallback
                 enhanced_segment['persistent_speaker_name'] = speaker_name
                 enhanced_segment['speaker_id'] = speaker_name  # Update speaker_id to show actual name
-            
+
             else:
                 # No assignment - mark as unassigned
                 enhanced_segment['persistent_speaker_id'] = None
                 enhanced_segment['assignment_confidence'] = 0.0
                 enhanced_segment['assignment_method'] = 'unassigned'
                 enhanced_segment['persistent_speaker_name'] = None
-            
+
             enhanced_segments.append(enhanced_segment)
-        
+
         return enhanced_segments
     
     def _generate_enhanced_speaker_summary(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

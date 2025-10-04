@@ -19,7 +19,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .models import (
     Recording, ProcessingResult, Speaker, SpeakerSegment,
-    PersistentSpeaker, SpeakerEmbedding, SpeakerMapping, SpeakerReviewQueue
+    PersistentSpeaker, SpeakerEmbedding, SpeakerMapping, SpeakerReviewQueue,
+    ProcessingTask
 )
 
 
@@ -777,24 +778,201 @@ class SpeakerReviewQueueService:
             raise Exception(f"Failed to get pending reviews: {str(e)}")
 
 
+class ProcessingTaskService:
+    """
+    Service layer for ProcessingTask operations.
+    Manages Celery background task tracking and status.
+    """
+
+    def __init__(self, db_session: AsyncSession):
+        self.db = db_session
+
+    async def create_task(
+        self,
+        task_id: str,
+        task_type: str,
+        recording_id: Optional[int] = None,
+        task_name: Optional[str] = None
+    ) -> ProcessingTask:
+        """Create a new processing task record."""
+        try:
+            task = ProcessingTask(
+                task_id=task_id,
+                task_type=task_type,
+                recording_id=recording_id,
+                task_name=task_name,
+                status='queued'
+            )
+
+            self.db.add(task)
+            await self.db.commit()
+            await self.db.refresh(task)
+
+            return task
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            raise Exception(f"Failed to create task: {str(e)}")
+
+    async def get_task(self, task_id: str) -> Optional[ProcessingTask]:
+        """Get task by Celery task ID."""
+        try:
+            result = await self.db.execute(
+                select(ProcessingTask).where(ProcessingTask.task_id == task_id)
+            )
+            return result.scalar_one_or_none()
+
+        except SQLAlchemyError as e:
+            raise Exception(f"Failed to get task: {str(e)}")
+
+    async def get_task_by_id(self, id: int) -> Optional[ProcessingTask]:
+        """Get task by database ID."""
+        try:
+            result = await self.db.execute(
+                select(ProcessingTask).where(ProcessingTask.id == id)
+            )
+            return result.scalar_one_or_none()
+
+        except SQLAlchemyError as e:
+            raise Exception(f"Failed to get task by ID: {str(e)}")
+
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: str,
+        progress: Optional[int] = None,
+        result_data: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None
+    ) -> ProcessingTask:
+        """Update task status and progress."""
+        try:
+            task = await self.get_task(task_id)
+            if not task:
+                raise Exception(f"Task {task_id} not found")
+
+            task.status = status
+            if progress is not None:
+                task.progress = progress
+            if result_data is not None:
+                task.result_data = result_data
+            if error_message is not None:
+                task.error_message = error_message
+
+            if status == 'processing' and not task.started_at:
+                task.started_at = datetime.utcnow()
+            elif status in ('completed', 'failed', 'cancelled'):
+                task.completed_at = datetime.utcnow()
+
+            await self.db.commit()
+            await self.db.refresh(task)
+
+            return task
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            raise Exception(f"Failed to update task status: {str(e)}")
+
+    async def get_tasks_by_recording(self, recording_id: int) -> List[ProcessingTask]:
+        """Get all tasks for a specific recording."""
+        try:
+            result = await self.db.execute(
+                select(ProcessingTask)
+                .where(ProcessingTask.recording_id == recording_id)
+                .order_by(desc(ProcessingTask.created_at))
+            )
+            return result.scalars().all()
+
+        except SQLAlchemyError as e:
+            raise Exception(f"Failed to get tasks by recording: {str(e)}")
+
+    async def get_recent_tasks(self, limit: int = 50, offset: int = 0) -> List[ProcessingTask]:
+        """Get recent tasks ordered by creation time."""
+        try:
+            result = await self.db.execute(
+                select(ProcessingTask)
+                .order_by(desc(ProcessingTask.created_at))
+                .limit(limit)
+                .offset(offset)
+            )
+            return result.scalars().all()
+
+        except SQLAlchemyError as e:
+            raise Exception(f"Failed to get recent tasks: {str(e)}")
+
+    async def delete_old_tasks(self, days: int = 7) -> int:
+        """Delete completed tasks older than specified days."""
+        try:
+            from datetime import timedelta
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+
+            result = await self.db.execute(
+                select(ProcessingTask).where(
+                    and_(
+                        ProcessingTask.status.in_(['completed', 'failed']),
+                        ProcessingTask.completed_at < cutoff_date
+                    )
+                )
+            )
+            tasks = result.scalars().all()
+
+            for task in tasks:
+                await self.db.delete(task)
+
+            await self.db.commit()
+            return len(tasks)
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            raise Exception(f"Failed to delete old tasks: {str(e)}")
+
+    async def cancel_task(self, task_id: str) -> ProcessingTask:
+        """Cancel a pending or processing task."""
+        try:
+            task = await self.get_task(task_id)
+            if not task:
+                raise Exception(f"Task {task_id} not found")
+
+            if task.status not in ('queued', 'processing'):
+                raise Exception(f"Cannot cancel task with status: {task.status}")
+
+            task.status = 'cancelled'
+            task.completed_at = datetime.utcnow()
+
+            await self.db.commit()
+            await self.db.refresh(task)
+
+            # Also revoke the Celery task
+            from celery_app import celery_app
+            celery_app.control.revoke(task_id, terminate=True)
+
+            return task
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            raise Exception(f"Failed to cancel task: {str(e)}")
+
+
 class DatabaseService:
     """
     Main database service that aggregates all individual services.
     Provides a single interface for all database operations.
     """
-    
+
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
         self.recordings = RecordingService(db_session)
         self.processing_results = ProcessingResultService(db_session)
         self.speakers = SpeakerService(db_session)
         self.speaker_segments = SpeakerSegmentService(db_session)
-        
+
         # New persistent speaker services
         self.persistent_speakers = PersistentSpeakerService(db_session)
         self.speaker_embeddings = SpeakerEmbeddingService(db_session)
         self.speaker_mappings = SpeakerMappingService(db_session)
         self.speaker_review_queue = SpeakerReviewQueueService(db_session)
+
+        # Processing task service
+        self.processing_tasks = ProcessingTaskService(db_session)
     
     async def close(self):
         """Close the database session."""

@@ -201,16 +201,57 @@ class SegmentSelector:
 class PersistentSpeakerManager:
     """
     Main manager for persistent speaker operations.
-    
+
     Handles speaker enrollment from recordings, session-to-persistent mapping,
     and maintains the persistent speaker database.
     """
-    
+
     def __init__(self, db_service: DatabaseService, speaker_identifier: SpeakerIdentifier):
         self.db = db_service
         self.speaker_identifier = speaker_identifier
         self.quality_assessor = SegmentQualityAssessor()
         self.segment_selector = SegmentSelector()
+
+    def _get_persistent_speakers_sync(self, active_only: bool = True):
+        """Synchronous method to get persistent speakers for Celery tasks."""
+        from database.models import PersistentSpeaker
+        from sqlalchemy.orm import Session
+
+        if isinstance(self.db.db, Session):
+            # Sync session (Celery context)
+            query = self.db.db.query(PersistentSpeaker)
+            if active_only:
+                query = query.filter(PersistentSpeaker.is_active == True)
+            return query.order_by(PersistentSpeaker.last_seen_at.desc()).all()
+        else:
+            # This shouldn't happen, but fall back to empty list
+            logger.warning("Expected sync session but got async session")
+            return []
+
+    def _get_speaker_embeddings_sync(self, speaker_id: str):
+        """Synchronous method to get speaker embeddings for Celery tasks."""
+        from database.models import SpeakerEmbedding
+        from sqlalchemy.orm import Session
+        import io
+
+        if isinstance(self.db.db, Session):
+            # Sync session (Celery context)
+            embeddings = self.db.db.query(SpeakerEmbedding).filter(
+                SpeakerEmbedding.speaker_id == speaker_id
+            ).all()
+
+            if embeddings:
+                # Properly decompress embeddings (they were saved with np.save, not raw bytes)
+                decompressed = []
+                for e in embeddings:
+                    buffer = io.BytesIO(e.embedding)
+                    embedding = np.load(buffer).astype(np.float32)
+                    decompressed.append(embedding)
+                return np.array(decompressed)
+            return None
+        else:
+            logger.warning("Expected sync session but got async session")
+            return None
     
     async def enroll_speaker_from_segments(
         self,
@@ -358,27 +399,113 @@ class PersistentSpeakerManager:
                 'message': str(e)
             }
     
-    async def find_matching_persistent_speaker(
+    def find_matching_persistent_speaker_sync(
         self,
         session_segments: List[Dict[str, Any]],
         audio_path: str,
-        confidence_threshold: float = 0.50
+        confidence_threshold: float = 0.45
     ) -> Optional[Dict[str, Any]]:
         """
-        Find if session speaker matches any existing persistent speakers.
-        
+        Synchronous version: Find if session speaker matches any existing persistent speakers.
+        Used in Celery tasks.
+
         Args:
             session_segments: List of segments for this session speaker
             audio_path: Path to the source audio file
             confidence_threshold: Minimum confidence for matching
-            
+
         Returns:
             Matching result dictionary or None
         """
         try:
             logger.info(f"🔍 Searching for matches against enrolled speakers...")
-            
-            # Get all active persistent speakers
+
+            # Get all active persistent speakers (sync)
+            persistent_speakers = self._get_persistent_speakers_sync(active_only=True)
+
+            logger.info(f"Found {len(persistent_speakers)} enrolled speakers to check against")
+
+            if not persistent_speakers:
+                return None
+
+            # Find best segment for identification
+            best_segment = max(session_segments, key=lambda s: s['end_time'] - s['start_time'])
+
+            # Extract audio segment
+            audio = AudioSegment.from_file(audio_path)
+            start_ms = int(best_segment['start_time'] * 1000)
+            end_ms = int(best_segment['end_time'] * 1000)
+            segment_audio = audio[start_ms:end_ms]
+
+            # Save to temporary file for identification
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
+                segment_audio.export(temp_file.name, format="wav")
+
+                # Prepare persistent speakers for identification
+                identification_speakers = []
+                for speaker in persistent_speakers:
+                    embeddings = self._get_speaker_embeddings_sync(speaker.id)
+                    if embeddings is not None and len(embeddings) > 0:
+                        identification_speakers.append({
+                            'speaker_id': speaker.id,
+                            'speaker_name': speaker.name or speaker.id,
+                            'embeddings': embeddings,
+                            'enrollment_threshold': speaker.confidence_threshold
+                        })
+
+                # Run identification
+                result = self.speaker_identifier.identify_speaker(
+                    temp_file.name,
+                    identification_speakers
+                )
+
+                # Clean up temp file
+                os.unlink(temp_file.name)
+
+                # Debug logging
+                logger.info(f"🔍 Speaker identification result: identified={result['identified_speaker']}, confidence={result['confidence']:.3f}, threshold={confidence_threshold:.3f}")
+
+                # Check if match meets threshold
+                if (result['identified_speaker'] and
+                    result['confidence'] >= confidence_threshold):
+
+                    logger.info(f"✅ Match found: {result['identified_speaker']} with confidence {result['confidence']:.3f}")
+                    return {
+                        'persistent_speaker_id': result['identified_speaker'],
+                        'confidence': result['confidence'],
+                        'similarity_score': result['similarity_score'],
+                        'method': 'auto_identification'
+                    }
+
+                logger.info(f"❌ No match: identified={result['identified_speaker']}, confidence={result['confidence']:.3f} < threshold={confidence_threshold:.3f}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Speaker matching failed: {e}")
+            return None
+
+    async def find_matching_persistent_speaker(
+        self,
+        session_segments: List[Dict[str, Any]],
+        audio_path: str,
+        confidence_threshold: float = 0.45
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Async version: Find if session speaker matches any existing persistent speakers.
+        Used in FastAPI routes.
+
+        Args:
+            session_segments: List of segments for this session speaker
+            audio_path: Path to the source audio file
+            confidence_threshold: Minimum confidence for matching
+
+        Returns:
+            Matching result dictionary or None
+        """
+        try:
+            logger.info(f"🔍 Searching for matches against enrolled speakers...")
+
+            # Get all active persistent speakers (async)
             persistent_speakers = await self.db.persistent_speakers.get_all_persistent_speakers(
                 active_only=True
             )
@@ -444,6 +571,45 @@ class PersistentSpeakerManager:
             logger.error(f"Speaker matching failed: {e}")
             return None
     
+    def create_speaker_mapping_sync(
+        self,
+        recording_id: int,
+        session_speaker_label: str,
+        persistent_speaker_id: str,
+        confidence: float,
+        similarity_score: float,
+        method: str = "auto"
+    ) -> None:
+        """Synchronous version: Create a session-to-persistent speaker mapping for Celery tasks."""
+        from database.models import SpeakerMapping
+        from sqlalchemy.orm import Session
+        from datetime import datetime
+
+        try:
+            if isinstance(self.db.db, Session):
+                # Sync session (Celery context)
+                mapping = SpeakerMapping(
+                    recording_id=recording_id,
+                    session_speaker_label=session_speaker_label,
+                    persistent_speaker_id=persistent_speaker_id,
+                    assignment_confidence=confidence,
+                    assignment_method=method,
+                    similarity_score=similarity_score,
+                    needs_review=(confidence < 0.85),
+                    assigned_at=datetime.utcnow()
+                )
+                self.db.db.add(mapping)
+                self.db.db.commit()
+
+                logger.info(f"✅ Created speaker mapping: {session_speaker_label} -> {persistent_speaker_id} (confidence: {confidence:.3f})")
+            else:
+                logger.warning("Expected sync session but got async session")
+        except Exception as e:
+            logger.error(f"Failed to create speaker mapping: {e}")
+            if isinstance(self.db.db, Session):
+                self.db.db.rollback()
+            raise
+
     async def create_speaker_mapping(
         self,
         recording_id: int,
@@ -464,9 +630,9 @@ class PersistentSpeakerManager:
                 similarity_score=similarity_score,
                 needs_review=(confidence < 0.85)  # Flag for review if medium confidence
             )
-            
+
             logger.info(f"✅ Created speaker mapping: {session_speaker_label} -> {persistent_speaker_id} (confidence: {confidence:.3f})")
-            
+
         except Exception as e:
             logger.error(f"Failed to create speaker mapping: {e}")
             raise
@@ -542,13 +708,15 @@ class PersistentSpeakerManager:
                     raise
             
             logger.info(f"Successfully enrolled speaker {persistent_speaker.id} ({speaker_name}) with {len(embeddings)} embeddings")
-            
+
             return {
+                "status": "enrolled",
                 "speaker_id": persistent_speaker.id,
                 "speaker_name": speaker_name,
-                "avg_quality": avg_quality,
+                "quality_score": avg_quality,
                 "consistency_score": consistency_score,
-                "embeddings_count": len(embeddings)
+                "embeddings_count": len(embeddings),
+                "created_at": persistent_speaker.created_at.isoformat() if persistent_speaker.created_at else None
             }
             
         except Exception as e:

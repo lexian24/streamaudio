@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Database
+*.db
+!data/.gitkeep
+data/*.db
+
+# Recordings and uploads
+recordings/
+uploads/
+*.wav
+*.mp3
+*.m4a
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+nohup.out
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Cache
+.cache/
+*.cache

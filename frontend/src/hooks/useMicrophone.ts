@@ -71,80 +71,28 @@ export const useMicrophone = (): UseMicrophoneReturn => {
       // Safari compatibility: Use ScriptProcessorNode for direct audio capture
       const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
       
-      if (isSafari || !window.MediaRecorder) {
-        
-        // Use ScriptProcessorNode for Safari with immediate streaming
-        const bufferSize = 4096;
-        const processor = audioContextRef.current.createScriptProcessor(bufferSize, 1, 1);
-        
-        sourceRef.current.connect(processor);
-        processor.connect(audioContextRef.current.destination);
-        
-        processor.onaudioprocess = (event) => {
-          if (audioDataCallbackRef.current) {
-            const inputBuffer = event.inputBuffer;
-            const audioData = inputBuffer.getChannelData(0);
-            
-            // Send immediately without buffering to avoid gaps and overlaps
-            const timestamp = Date.now();
-            audioDataCallbackRef.current(new Float32Array(audioData), timestamp);
-          }
-        };
-        
-        // Store processor reference for cleanup
-        (sourceRef.current as any).processor = processor;
-        
-      } else {
-        
-        // Try different MIME types for better compatibility
-        let mimeType = 'audio/webm';
-        const supportedTypes = [
-          'audio/webm;codecs=opus',
-          'audio/webm',
-          'audio/mp4',
-          'audio/wav'
-        ];
-        
-        for (const type of supportedTypes) {
-          if (MediaRecorder.isTypeSupported(type)) {
-            mimeType = type;
-            break;
-          }
+      console.log('🎙️ Audio processing path:', isSafari ? 'Safari/ScriptProcessor' : 'MediaRecorder', 'MediaRecorder available:', !!window.MediaRecorder);
+      
+      // Use ScriptProcessorNode for reliable real-time audio streaming
+      const bufferSize = 4096;
+      const processor = audioContextRef.current.createScriptProcessor(bufferSize, 1, 1);
+      
+      sourceRef.current.connect(processor);
+      processor.connect(audioContextRef.current.destination);
+      
+      processor.onaudioprocess = (event) => {
+        if (audioDataCallbackRef.current) {
+          const inputBuffer = event.inputBuffer;
+          const audioData = inputBuffer.getChannelData(0);
+          
+          // Send immediately without buffering to avoid gaps and overlaps
+          const timestamp = Date.now();
+          audioDataCallbackRef.current(new Float32Array(audioData), timestamp);
         }
-
-        console.log('Using MIME type:', mimeType);
-        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
-
-        // Handle recorded data
-        mediaRecorderRef.current.ondataavailable = (event) => {
-          if (event.data.size > 0 && audioDataCallbackRef.current) {
-            
-            // Convert blob to array buffer
-            event.data.arrayBuffer().then(buffer => {
-              console.log('Sending audio buffer, size:', buffer.byteLength);
-              // Create a simple Float32Array representation
-              const audioData = new Float32Array(buffer.byteLength / 4);
-              const view = new DataView(buffer);
-              
-              // Convert bytes to float32 values (simplified)
-              for (let i = 0; i < audioData.length && i * 4 < buffer.byteLength - 3; i++) {
-                try {
-                  audioData[i] = view.getFloat32(i * 4, true);
-                } catch (e) {
-                  audioData[i] = 0; // Fallback for out-of-bounds
-                }
-              }
-              
-              audioDataCallbackRef.current!(audioData, Date.now());
-            }).catch(error => {
-              console.error('Error processing audio data:', error);
-            });
-          }
-        };
-
-        // Start recording with smaller, consistent chunks for better quality
-        mediaRecorderRef.current.start(100); // 100ms chunks for smoother audio
-      }
+      };
+      
+      // Store processor reference for cleanup
+      (sourceRef.current as any).processor = processor;
 
       // Start audio level monitoring
       updateAudioLevel();
@@ -192,6 +140,9 @@ export const useMicrophone = (): UseMicrophoneReturn => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
+
+    // Clear audio data callback to stop sending chunks
+    audioDataCallbackRef.current = null;
 
     // Clean up ScriptProcessorNode for Safari
     if (sourceRef.current && (sourceRef.current as any).processor) {

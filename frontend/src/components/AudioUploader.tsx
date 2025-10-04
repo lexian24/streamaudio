@@ -35,6 +35,50 @@ const AudioUploader: React.FC<AudioUploaderProps> = ({
     return null;
   };
 
+  const pollTaskStatus = useCallback(async (taskId: string) => {
+    const maxAttempts = 300; // 5 minutes max (300 * 1000ms)
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      try {
+        const response = await fetch(`/api/tasks/${taskId}`);
+
+        if (!response.ok) {
+          throw new Error('Failed to get task status');
+        }
+
+        const taskStatus = await response.json();
+
+        if (taskStatus.status === 'completed') {
+          // Task completed successfully
+          if (taskStatus.result) {
+            onAnalysisComplete(taskStatus.result);
+          } else {
+            throw new Error('Task completed but no result data');
+          }
+          return;
+        } else if (taskStatus.status === 'failed') {
+          // Task failed
+          throw new Error(taskStatus.error || 'Processing failed');
+        }
+
+        // Task still processing, wait and poll again
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to check task status';
+        setError(errorMessage);
+        onError(errorMessage);
+        return;
+      }
+    }
+
+    // Timeout
+    const timeoutError = 'Processing timeout - please check task status later';
+    setError(timeoutError);
+    onError(timeoutError);
+  }, [onAnalysisComplete, onError]);
+
   const uploadAndAnalyzeFile = useCallback(async (file: File) => {
     const validationError = validateFile(file);
     if (validationError) {
@@ -45,7 +89,7 @@ const AudioUploader: React.FC<AudioUploaderProps> = ({
 
     setError(null);
     onAnalysisStart();
-    
+
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -60,14 +104,22 @@ const AudioUploader: React.FC<AudioUploaderProps> = ({
         throw new Error(errorData.detail || 'Analysis failed');
       }
 
-      const result: AudioAnalysisResult = await response.json();
-      onAnalysisComplete(result);
+      const uploadResult = await response.json();
+
+      // Check if response is async task or direct result
+      if (uploadResult.task_id) {
+        // Async task - poll for results
+        await pollTaskStatus(uploadResult.task_id);
+      } else {
+        // Direct result (backward compatibility)
+        onAnalysisComplete(uploadResult as AudioAnalysisResult);
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Analysis failed';
       setError(errorMessage);
       onError(errorMessage);
     }
-  }, [onAnalysisStart, onAnalysisComplete, onError]);
+  }, [onAnalysisStart, onAnalysisComplete, onError, pollTaskStatus]);
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();

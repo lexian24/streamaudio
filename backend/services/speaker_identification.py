@@ -32,32 +32,47 @@ class SpeakerIdentifier:
     - Confidence calibration
     """
     
-    def __init__(self, model_source: str = "speechbrain/spkrec-ecapa-voxceleb"):
+    def __init__(self, model_source: str = "speechbrain/spkrec-ecapa-voxceleb", savedir: str = None):
         """
         Initialize the speaker identification system.
-        
+
         Args:
             model_source: SpeechBrain model source for ECAPA-TDNN
+            savedir: Directory to save/load the model (ensures consistency)
         """
         logger.info("Initializing SpeakerIdentifier with ECAPA-TDNN...")
-        
+
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
-        
-        # Load ECAPA-TDNN model
+
+        # Load ECAPA-TDNN model with fixed savedir to ensure consistency
         try:
-            self.classifier = EncoderClassifier.from_hparams(
-                source=model_source,
-                run_opts={"device": self.device}
-            )
-            logger.info("ECAPA-TDNN model loaded successfully")
+            if savedir:
+                self.classifier = EncoderClassifier.from_hparams(
+                    source=model_source,
+                    savedir=savedir,
+                    run_opts={"device": self.device}
+                )
+            else:
+                self.classifier = EncoderClassifier.from_hparams(
+                    source=model_source,
+                    run_opts={"device": self.device}
+                )
+
+            # Log embedding dimension for verification
+            with torch.no_grad():
+                dummy_audio = torch.randn(1, 16000).to(self.device)
+                dummy_emb = self.classifier.encode_batch(dummy_audio)
+                self.embedding_dim = dummy_emb.squeeze().shape[0]
+
+            logger.info(f"ECAPA-TDNN model loaded successfully - embedding dim: {self.embedding_dim}")
         except Exception as e:
             logger.error(f"Failed to load ECAPA-TDNN model: {e}")
             raise
         
         # Configuration
-        self.base_threshold = 0.50  # Base similarity threshold
+        self.base_threshold = 0.45  # Base similarity threshold (lowered for VAD recordings)
         self.min_audio_duration = 2.0  # Minimum audio duration in seconds
         self.target_sample_rate = 16000  # Target sample rate
         
@@ -290,16 +305,23 @@ class SpeakerIdentifier:
         try:
             # Extract embedding from query audio
             query_embedding, quality_metrics = self.extract_embedding(audio_path)
-            
+
             # Compare against all enrolled speakers
             speaker_scores = {}
-            
+
             for speaker_data in enrolled_speakers:
                 speaker_name = speaker_data['speaker_name']
                 scores = []
-                
+
                 # Compare against all enrollment samples
                 for enrollment_embedding in speaker_data['embeddings']:
+                    # Validate embedding dimensions match
+                    if query_embedding.shape != enrollment_embedding.shape:
+                        logger.error(f"Embedding dimension mismatch for {speaker_name}: query={query_embedding.shape}, enrolled={enrollment_embedding.shape}")
+                        logger.error(f"Current model produces {self.embedding_dim}-dim embeddings. Speaker {speaker_name} was enrolled with {enrollment_embedding.shape[0]}-dim embeddings.")
+                        logger.error("Please re-enroll all speakers with the current model to fix this issue.")
+                        continue
+
                     similarity = 1 - cosine(query_embedding, enrollment_embedding)
                     scores.append(similarity)
                 
@@ -320,17 +342,15 @@ class SpeakerIdentifier:
                 }
             
             # Find best candidate with confidence-based approach
-            # High confidence threshold prevents weak assignments (handles similar speakers)
-            HIGH_CONFIDENCE_THRESHOLD = 0.5  # Lowered threshold for better recognition
-            
+            # Use self.base_threshold (single source of truth for confidence threshold)
             best_speaker = None
             best_score = 0.0
-            
+
             for speaker_name, score_data in speaker_scores.items():
                 if score_data['passes_threshold'] and score_data['max_score'] > best_score:
                     best_score = score_data['max_score']
                     best_speaker = speaker_name
-            
+
             # Calculate final confidence with quality adjustment
             # Use weighted combination instead of multiplication to avoid over-penalization
             if best_speaker:
@@ -338,15 +358,16 @@ class SpeakerIdentifier:
                 confidence = (best_score * 0.8) + (quality_metrics['quality_score'] * 0.2)
             else:
                 confidence = 0.0
-            
+
             # Debug logging
             if best_speaker:
                 logger.info(f"🔍 Best match: {best_speaker}, similarity: {best_score:.3f}, quality: {quality_metrics['quality_score']:.3f}, confidence: {confidence:.3f}")
-                logger.info(f"🎯 Checking confidence {confidence:.3f} >= {HIGH_CONFIDENCE_THRESHOLD} threshold")
-            
-            # Apply high confidence threshold - reject weak identifications
-            if best_speaker and confidence < HIGH_CONFIDENCE_THRESHOLD:
-                logger.info(f"⚠️  {best_speaker} confidence {confidence:.3f} < {HIGH_CONFIDENCE_THRESHOLD} threshold, marking as unidentified")
+                logger.info(f"🎯 Checking confidence {confidence:.3f} >= {self.base_threshold} threshold")
+
+            # Apply confidence threshold - reject weak identifications
+            # Uses self.base_threshold as single source of truth
+            if best_speaker and confidence < self.base_threshold:
+                logger.info(f"⚠️  {best_speaker} confidence {confidence:.3f} < {self.base_threshold} threshold, marking as unidentified")
                 best_speaker = None
                 confidence = 0.0
             

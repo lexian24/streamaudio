@@ -328,3 +328,48 @@ class SpeakerReviewQueue(Base):
 
 # Index for efficient queue processing
 Index('idx_review_queue_status_priority', SpeakerReviewQueue.status, SpeakerReviewQueue.priority)
+
+
+class ProcessingTask(Base):
+    """
+    Model for tracking Celery background processing tasks.
+
+    Stores task metadata, status, and results for async audio processing.
+    Allows frontend to poll for task completion and retrieve results.
+    """
+    __tablename__ = "processing_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(String(255), unique=True, nullable=False, index=True)  # Celery task ID
+    recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=True)  # Associated recording
+
+    # Task information
+    task_type = Column(String(50), nullable=False)  # 'analyze_upload', 'analyze_vad', etc.
+    task_name = Column(String(100), nullable=True)  # Human-readable task name
+
+    # Task status
+    status = Column(String(20), default="queued", nullable=False, index=True)  # queued, processing, completed, failed, cancelled
+    progress = Column(Integer, default=0)  # 0-100 percentage (optional)
+
+    # Results and errors
+    result_data = Column(JSON, nullable=True)  # Final processing results (full AudioAnalysisResult)
+    error_message = Column(Text, nullable=True)  # Error message if failed
+    traceback = Column(Text, nullable=True)  # Full traceback for debugging
+
+    # Timing metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Processing metadata
+    worker_name = Column(String(100), nullable=True)  # Celery worker that processed this task
+    retries = Column(Integer, default=0)  # Number of retry attempts
+
+    # Relationships
+    recording = relationship("Recording")
+
+    def __repr__(self):
+        return f"<ProcessingTask(id={self.id}, task_id='{self.task_id}', status='{self.status}')>"
+
+# Index for efficient task lookup and cleanup
+Index('idx_processing_tasks_status_created', ProcessingTask.status, ProcessingTask.created_at)

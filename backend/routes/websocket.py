@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import numpy as np
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -22,7 +23,9 @@ async def websocket_vad_stream(websocket: WebSocket):
     logger.info("WebSocket connection established for VAD streaming")
     
     auto_recorder = get_auto_recorder()
+    logger.info(f"Auto recorder status: {auto_recorder is not None}")
     if not auto_recorder:
+        logger.error("Auto recorder not initialized!")
         await websocket.close(code=1011, reason="Auto recorder not initialized")
         return
     
@@ -34,24 +37,43 @@ async def websocket_vad_stream(websocket: WebSocket):
             try:
                 # Parse the incoming data
                 audio_data = json.loads(data)
+                message_type = audio_data.get('type')
+                logger.info(f"📨 Received WebSocket message: type={message_type}")
                 
-                if audio_data.get("type") == "audio":
+                if message_type == "audio_chunk":
                     # Decode base64 audio data
-                    audio_bytes = base64.b64decode(audio_data["data"])
+                    audio_b64 = audio_data.get("audio_data", "")
+                    if not audio_b64:
+                        logger.warning("Received empty audio data")
+                        continue
+                        
+                    audio_bytes = base64.b64decode(audio_b64)
                     
                     # Convert to numpy array (assuming float32 format)
                     audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
                     
+                    # Get timestamp and convert from milliseconds to seconds if needed
+                    timestamp = audio_data.get("timestamp", time.time())
+                    if timestamp > 10000000000:  # If timestamp is in milliseconds
+                        timestamp = timestamp / 1000.0
+                    
+                    # Calculate audio level for debugging
+                    audio_level = float(np.sqrt(np.mean(audio_array ** 2)))
+                    logger.info(f"📡 Audio level: {audio_level:.4f}")
+                    
                     # Process through VAD
-                    result = auto_recorder.process_audio_stream(audio_array)
+                    result = auto_recorder.process_audio_chunk(audio_array, timestamp)
                     
                     # Send response back to client
                     response = {
-                        "type": "vad_result",
-                        "is_speech": result.get("is_speech", False),
-                        "confidence": result.get("confidence", 0.0),
-                        "recording_status": result.get("recording_status", "idle")
+                        "type": "vad_status",
+                        "result": result,
+                        "timestamp": timestamp
                     }
+                    
+                    # Log the VAD result
+                    if result.get("status") == "active":
+                        logger.info(f"🎤 VAD Result: speech={result.get('is_speech')}, state={result.get('state')}, confidence={result.get('confidence', 0):.3f}")
                     
                     await websocket.send_text(json.dumps(response))
                 
@@ -82,11 +104,13 @@ async def websocket_vad_stream(websocket: WebSocket):
                             "status": status
                         }))
                 
-            except json.JSONDecodeError:
-                logger.warning("Received invalid JSON data from WebSocket client")
+            except json.JSONDecodeError as e:
+                logger.warning(f"Received invalid JSON data from WebSocket client: {e}")
                 continue
             except Exception as e:
                 logger.error(f"Error processing WebSocket data: {e}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
                 continue
                 
     except WebSocketDisconnect:

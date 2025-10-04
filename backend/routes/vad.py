@@ -17,7 +17,7 @@ import librosa
 from database import get_database_service
 from database.services import DatabaseService
 from .dependencies import get_auto_recorder
-from routes.analysis import get_audio_processor
+from tasks.audio_tasks import process_vad_recording
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -86,115 +86,135 @@ async def delete_recording(filename: str):
 async def upload_recording(
     file: UploadFile = File(...),
     db_service: DatabaseService = Depends(get_database_service)
-):
-    """Store recording from continuous recorder without processing"""
+) -> Dict[str, Any]:
+    """
+    Process VAD recording using the same pipeline as upload/analyze endpoint
+    Returns analysis results immediately like the upload flow
+    """
     auto_recorder = get_auto_recorder()
     if not auto_recorder:
         raise HTTPException(status_code=500, detail="Auto recorder not initialized")
     
+    # Validate file format
+    if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm')):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Please upload .wav, .mp3, .m4a, .flac, .ogg, or .webm"
+        )
+    
+    # Check file size (50MB limit)
+    max_size = 50 * 1024 * 1024
+    file_content = await file.read()
+    if len(file_content) > max_size:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
+    
     try:
-        # Validate file format
-        if not file.filename.lower().endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm')):
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported file format"
-            )
+        start_time = time.time()
         
-        # Check file size (50MB limit)
-        max_size = 50 * 1024 * 1024
-        file_content = await file.read()
-        if len(file_content) > max_size:
-            raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
-        
-        # Generate filename with timestamp - always save as WAV
+        # Save uploaded file permanently with timestamp - use same logic as analyze endpoint
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        temp_filename = f"temp_{timestamp}.webm"
-        final_filename = f"recording_{timestamp}.wav"
+        original_ext = Path(file.filename).suffix.lower()
         
-        # Save to recordings directory
-        recordings_dir = auto_recorder.recordings_dir
-        temp_filepath = recordings_dir / temp_filename
-        final_filepath = recordings_dir / final_filename
+        # Convert all uploads to WAV for consistency
+        if original_ext in ['.wav']:
+            temp_filename = f"vad_{timestamp}{original_ext}"
+            final_filename = f"vad_{timestamp}.wav"
+            needs_conversion = False
+        else:
+            temp_filename = f"vad_{timestamp}{original_ext}"
+            final_filename = f"vad_{timestamp}.wav"
+            needs_conversion = True
+        
+        # Create recordings directory
+        recordings_dir = Path("recordings")
+        recordings_dir.mkdir(exist_ok=True)
+        
+        temp_path = recordings_dir / temp_filename
+        final_path = recordings_dir / final_filename
         
         # Save temporary file
-        with open(temp_filepath, 'wb') as f:
+        with open(temp_path, 'wb') as f:
             f.write(file_content)
         
         try:
-            # Convert webm to wav using ffmpeg
-            subprocess.run([
-                'ffmpeg', '-i', str(temp_filepath), 
-                '-acodec', 'pcm_s16le',  # 16-bit PCM
-                '-ar', '16000',          # 16kHz sample rate
-                '-ac', '1',              # Mono
-                '-y',                    # Overwrite output
-                str(final_filepath)
-            ], capture_output=True, text=True, check=True)
+            # Convert to WAV if needed
+            if needs_conversion:
+                logger.info(f"Converting {original_ext} to WAV...")
+                subprocess.run([
+                    'ffmpeg', '-i', str(temp_path), 
+                    '-acodec', 'pcm_s16le',  # 16-bit PCM
+                    '-ar', '16000',          # 16kHz sample rate
+                    '-ac', '1',              # Mono
+                    str(final_path)
+                ], check=True, capture_output=True)
+                
+                # Use the converted file for processing
+                processing_path = str(final_path)
+                stored_filename = final_filename
+            else:
+                # Use original WAV file
+                processing_path = str(temp_path)
+                stored_filename = temp_filename
+                final_path = temp_path
             
-            # Remove temporary file
-            temp_filepath.unlink()
-            
-            # Get final file size and metadata
-            final_size = final_filepath.stat().st_size
-            
-            # Get audio metadata using librosa
+            # Get file size and audio metadata
+            file_size = final_path.stat().st_size
             try:
-                duration = librosa.get_duration(path=str(final_filepath))
-                sr = librosa.get_samplerate(str(final_filepath))
+                duration = librosa.get_duration(path=processing_path)
+                sample_rate = librosa.get_samplerate(processing_path)
             except Exception:
                 duration = None
-                sr = 16000  # Default sample rate
+                sample_rate = 16000
             
-            # Store recording metadata in database
-            try:
-                recording = await db_service.recordings.create_recording(
-                    filename=final_filename,
-                    original_filename=file.filename,
-                    file_path=str(final_filepath),
-                    file_size=final_size,
-                    duration=duration,
-                    sample_rate=sr,
-                    channels=1,  # Mono after conversion
-                    format="wav"
-                )
-                
-                logger.info(f"✅ Recording stored in database: ID {recording.id}")
-                
-            except Exception as e:
-                logger.error(f"Failed to store recording metadata in database: {e}")
-                # Continue even if database storage fails
-            
-            logger.info(f"✅ Recording converted and stored: {final_filename} ({final_size} bytes)")
-            
-            return {
-                "status": "stored",
-                "filename": final_filename,
-                "path": str(final_filepath),
-                "size": final_size,
-                "duration": duration,
-                "recording_id": recording.id if 'recording' in locals() else None
-            }
-            
-        except subprocess.CalledProcessError as e:
-            # If conversion fails, keep original format
-            logger.warning(f"FFmpeg conversion failed: {e.stderr}")
-            temp_filepath.rename(final_filepath.with_suffix('.webm'))
-            
-            return {
-                "status": "stored",
-                "filename": temp_filename,
-                "path": str(final_filepath.with_suffix('.webm')),
-                "size": len(file_content)
-            }
-        except Exception as e:
-            # Clean up temp file on any error
-            if temp_filepath.exists():
-                temp_filepath.unlink()
-            raise e
-        
-    except Exception as e:
-        logger.error(f"Failed to store recording: {e}")
-        raise HTTPException(status_code=500, detail=f"Storage failed: {str(e)}")
+            # Create a permanent recording entry
+            recording = await db_service.recordings.create_recording(
+                filename=stored_filename,
+                original_filename=file.filename,
+                file_path=str(final_path),
+                file_size=file_size,
+                duration=duration,
+                sample_rate=sample_rate,
+                channels=1,
+                format="wav"
+            )
 
-# Note: process_recorded_meeting endpoint is quite long - would be extracted similarly
-# For brevity, I'll create shorter route files for the other modules
+            logger.info(f"✅ VAD recording saved: {recording.id}, submitting to Celery for async processing...")
+
+            # Submit Celery task for async processing
+            task = process_vad_recording.delay(
+                recording_id=recording.id,
+                audio_path=processing_path,
+                auto_enroll_new_speakers=True
+            )
+
+            # Create task record in database
+            task_record = await db_service.processing_tasks.create_task(
+                task_id=task.id,
+                task_type='analyze_vad',
+                recording_id=recording.id,
+                task_name=f"Process VAD: {file.filename}"
+            )
+
+            logger.info(f"🚀 VAD task submitted: {task.id}")
+
+            # Return task info immediately (non-blocking)
+            return {
+                "status": "queued",
+                "task_id": task.id,
+                "recording_id": recording.id,
+                "filename": file.filename,
+                "message": "VAD recording uploaded successfully. Processing in background.",
+                "poll_url": f"/api/tasks/{task.id}"
+            }
+
+        finally:
+            # Clean up temporary file only if conversion happened
+            if needs_conversion and temp_path != final_path:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+
+    except Exception as e:
+        logger.error(f"VAD recording upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
